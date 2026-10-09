@@ -69,6 +69,14 @@ class ProbeResult:
     taken_at: datetime
 
 
+class Capability(StrEnum):
+    """What an adapter can do on a Connection. The agent gets a tool only for capabilities the
+    Connection has."""
+
+    PROBE = "probe"
+    STORAGE_STATS = "storage_stats"
+
+
 class CollectionKind(StrEnum):
     TABLE = "table"
     PARTITIONED_TABLE = "partitioned_table"
@@ -128,6 +136,15 @@ class Run:
     status: RunStatus
 
 
+@dataclass(frozen=True)
+class Thread:
+    """A conversation with the agent, bound to one Connection for its whole life."""
+
+    id: str
+    connection_id: str
+    created_at: datetime
+
+
 FindingCategory = Literal[
     "size",
     "slow_query",
@@ -185,6 +202,21 @@ class Observation:
     evidence: dict[str, Any]
     recommendation: str | None
     ddl: str | None
+
+
+@dataclass(frozen=True)
+class LLMRequestLog:
+    """One model request, as the LLMGateway logs it."""
+
+    model: str
+    at: datetime
+    duration_ms: float
+    request: str  # redacted, truncated
+    response: str
+    input_tokens: int
+    cached_tokens: int
+    output_tokens: int
+    cost_usd: float | None  # None for a model without a known price
 
 
 @dataclass(frozen=True)

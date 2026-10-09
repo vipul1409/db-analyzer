@@ -1,0 +1,64 @@
+{
+ "calls": [
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "write_file"
+    ],
+    "messages": 6,
+    "last": "human"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "text",
+       "text": "public.events",
+       "phase": "final_answer",
+       "index": 0,
+       "id": "msg_0ab761b3ab185279016ac8a0d4896087d19d752df1ebec3014"
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_0ab761b3ab185279016ac8a0d431e087d1b5be0880057429d5",
+      "created_at": 1791533268.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_0ab761b3ab185279016ac8a0d431e087d1b5be0880057429d5",
+     "tool_calls": [],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 3007,
+      "output_tokens": 6,
+      "total_tokens": 3013,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 1536
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  }
+ ]
+}

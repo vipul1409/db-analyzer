@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "db_analyzer": "./src/db_analyzer/agent/studio.py:graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

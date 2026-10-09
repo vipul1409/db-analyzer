@@ -6,6 +6,7 @@ exempts the statement) → execute → audit. The guard profile follows from the
 result filter is added in a later ticket.
 """
 
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -38,11 +39,17 @@ class QueryBudget:
     def __init__(self, limit: int = MAX_QUERIES_PER_TURN):
         self.limit = limit
         self.used = 0
+        self._lock = threading.Lock()  # the agent runs independent tools in parallel
 
     def spend(self) -> None:
-        if self.used >= self.limit:
-            raise QueryCapReached(self.limit)
-        self.used += 1
+        with self._lock:
+            if self.used >= self.limit:
+                raise QueryCapReached(self.limit)
+            self.used += 1
+
+    def reset(self) -> None:
+        with self._lock:
+            self.used = 0
 
 
 class SafeExecutor:
@@ -53,12 +60,14 @@ class SafeExecutor:
         audit: AuditSink,
         gate: GateLimits | None = None,
         budget: QueryBudget | None = None,
+        thread_id: str | None = None,
     ):
         self._conn = conn
         self._connection_id = connection_id
         self._audit = audit
         self._gate = gate or GateLimits()
         self._budget = budget
+        self._thread_id = thread_id
 
     def execute(self, sql: str, purpose: str) -> list[Row]:
         """Run vetted SQL (templates, verbatim workload text) under the internal profile."""
@@ -122,6 +131,7 @@ class SafeExecutor:
                 duration_ms=duration_ms,
                 row_count=row_count,
                 at=datetime.now(UTC),
+                thread_id=self._thread_id,
                 plan_cost=plan.total_cost if plan else None,
                 plan_rows=plan.result_rows if plan else None,
             )

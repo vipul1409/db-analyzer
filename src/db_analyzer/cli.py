@@ -1,5 +1,6 @@
 """`dbx` command line. A thin layer over AnalyzerService."""
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -9,8 +10,11 @@ from typing import Annotated
 import psycopg
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
+from db_analyzer.agent.events import AgentEvent
+from db_analyzer.agent.llm import LLMConfigError
 from db_analyzer.core.model import ConnectionRefused, ProbeResult, QueryRejected, Run
 from db_analyzer.core.units import format_bytes
 from db_analyzer.service import AnalyzerService
@@ -61,6 +65,107 @@ def analyze(
     if report is not None:
         report.write_bytes(service.export(run.id, "md"))
         console.print(f"Report written to [bold]{report}[/]")
+
+
+@app.command()
+def chat(
+    name: Annotated[str, typer.Argument(help="Connection to talk about (see `dbx connect`).")],
+    thread: Annotated[
+        str | None, typer.Option(help="Resume this Thread instead of starting a new one.")
+    ] = None,
+) -> None:
+    """Chat with the agent about one Connection. Needs OPENAI_API_KEY."""
+    service = AnalyzerService()
+    try:
+        connection = service.connection(name)
+        current = service.thread(thread) if thread else service.start_thread(connection.id)
+    except KeyError as e:
+        console.print(f"[bold red]{e.args[0]}[/]")
+        raise typer.Exit(1) from e
+    if current.connection_id != connection.id:
+        console.print(f"[bold red]Thread {thread} belongs to another Connection.[/]")
+        raise typer.Exit(1)
+    console.print(
+        f"[dim]Thread {current.id} on '{name}'. Resume with "
+        f"`dbx chat {name} --thread {current.id}`. Empty line or Ctrl-D quits.[/]"
+    )
+    while True:
+        try:
+            message = console.input("[bold]you>[/] ")
+        except EOFError:
+            break
+        if not message.strip():
+            break
+        try:
+            asyncio.run(_chat_turn(service, current.id, message))
+        except LLMConfigError as e:
+            console.print(f"[bold red]Cannot reach the model:[/] {e}")
+            raise typer.Exit(1) from e
+
+
+async def _chat_turn(service: AnalyzerService, thread_id: str, message: str) -> None:
+    renderer = TurnRenderer(console)
+    async for event in service.send(thread_id, message):
+        renderer.render(event)
+
+
+class TurnRenderer:
+    """Renders one Turn's AgentEvents: the answer streams; tools, SQL and limits go between."""
+
+    SQL_CHARS = 90
+
+    def __init__(self, out: Console):
+        self._out = out
+        self._mid_line = False
+
+    def render(self, event: AgentEvent) -> None:
+        match event.type:
+            case "token":
+                self._out.print(event.text, end="", markup=False, highlight=False)
+                self._mid_line = True
+            case "tool_started":
+                args = ", ".join(f"{k}={v!r}" for k, v in event.args.items())
+                self._line(f"[cyan]→ {escape(event.name)}({escape(args)})[/]")
+            case "tool_finished" if not event.ok:
+                self._line(f"[yellow]  ✗ {escape(event.name)} failed: {escape(event.summary)}[/]")
+            case "sql_executed":
+                cost = f", cost {event.plan_cost:.3g}" if event.plan_cost is not None else ""
+                stats = f"{event.row_count} rows, {event.duration_ms or 0:.0f} ms{cost}"
+                self._line(f"[dim]  sql {event.purpose} ({stats}): {self._sql(event.sql)}[/]")
+            case "sql_rejected":
+                self._line(f"[red]  sql rejected ({event.reason}): {self._sql(event.sql)}[/]")
+            case "run_finished":
+                self._line(f"[dim]  Run {event.run_id[:8]} {event.status}[/]")
+            case "limit_reached":
+                self._line(
+                    f"[yellow]Stopped at the {event.limit} limit ({event.used} of {event.max}).[/]"
+                )
+            case "error":
+                self._line(f"[bold red]Error:[/] {escape(event.message)}", wrap=True)
+            case "usage":
+                cost = f" · ${event.cost_usd:.4f}" if event.cost_usd is not None else ""
+                self._line(
+                    f"[dim]{event.input_tokens:,} in ({event.cached_tokens:,} cached) / "
+                    f"{event.output_tokens:,} out tokens{cost}[/]"
+                )
+            case "done":
+                if self._mid_line:
+                    self._out.print()
+                    self._mid_line = False
+
+    def _line(self, text: str, wrap: bool = False) -> None:
+        """Progress lines stay on one line, cut to the terminal width; errors wrap in full."""
+        if self._mid_line:
+            self._out.print()
+            self._mid_line = False
+        self._out.print(
+            text, highlight=False, no_wrap=not wrap, overflow="fold" if wrap else "ellipsis"
+        )
+
+    def _sql(self, sql: str) -> str:
+        flat = " ".join(sql.split())
+        text = flat if len(flat) <= self.SQL_CHARS else flat[: self.SQL_CHARS - 1] + "…"
+        return escape(text)
 
 
 @contextmanager

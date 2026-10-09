@@ -101,3 +101,29 @@ class ObservationRow(Base):
     ddl: Mapped[str | None] = mapped_column(Text)
 
     finding: Mapped[FindingRow] = relationship(lazy="joined")
+
+
+class ThreadRow(Base):
+    __tablename__ = "threads"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("connections.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LLMRequestRow(Base):
+    """Redacted log of every model request (proposal §3.5: LLMGateway)."""
+
+    __tablename__ = "llm_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(ForeignKey("threads.id"), index=True)
+    model: Mapped[str] = mapped_column(String)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float] = mapped_column(Float)
+    request: Mapped[str] = mapped_column(Text)
+    response: Mapped[str] = mapped_column(Text)
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    cached_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cost_usd: Mapped[float | None] = mapped_column(Float)

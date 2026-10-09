@@ -1,33 +1,70 @@
 """AnalyzerService: the single entry point for the CLI, LangGraph Studio, the API and tests."""
 
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+import httpx
+import psycopg
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.config import get_stream_writer
 
 from db_analyzer import report
+from db_analyzer.adapters import postgres as pg
 from db_analyzer.adapters.postgres import inventory as pg_inventory
 from db_analyzer.adapters.postgres import probe as pg_probe
 from db_analyzer.adapters.postgres.session import open_session
+from db_analyzer.agent import digest
+from db_analyzer.agent.events import (
+    AgentEvent,
+    Done,
+    Error,
+    LimitReached,
+    RunFinished,
+    Translator,
+    Usage,
+    from_audit,
+)
+from db_analyzer.agent.graph import build_agent
+from db_analyzer.agent.llm import (
+    Cassette,
+    CassetteExhausted,
+    CassetteMismatch,
+    LLMGateway,
+    LLMSettings,
+    StrictTools,
+    TurnLimits,
+    make_model,
+)
+from db_analyzer.agent.tools import build_tools
 from db_analyzer.analyzers import inventory
 from db_analyzer.core.model import (
     AnalyzerName,
     AuditEntry,
+    Capability,
     Connection,
     ConnectionRefused,
     Finding,
     GateLimits,
+    LLMRequestLog,
     Observation,
     ProbeResult,
+    QueryCapReached,
+    QueryRejected,
     Run,
     SessionLimits,
     StorageStats,
+    Thread,
 )
-from db_analyzer.safety.executor import SafeExecutor
+from db_analyzer.safety.executor import QueryBudget, SafeExecutor
 from db_analyzer.store.store import Store
 
 SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
+SqlObserver = Callable[[AuditEntry], None]
 
 
 def default_home() -> Path:
@@ -35,8 +72,10 @@ def default_home() -> Path:
 
 
 class AnalyzerService:
-    def __init__(self, home: Path | None = None):
-        self._store = Store((home or default_home()) / "db-analyzer.sqlite")
+    def __init__(self, home: Path | None = None, llm: LLMSettings | None = None):
+        self._home = home or default_home()
+        self._store = Store(self._home / "db-analyzer.sqlite")
+        self._llm = llm or LLMSettings.from_env()
 
     def add_connection(
         self,
@@ -53,9 +92,19 @@ class AnalyzerService:
     def connection(self, name: str) -> Connection:
         return self._store.find_connection(name)
 
-    def probe(self, connection_id: str) -> ProbeResult:
+    def capabilities(self, connection_id: str) -> frozenset[Capability]:
+        self._store.get_connection(connection_id)  # only Postgres today: one adapter
+        return pg.CAPABILITIES
+
+    def probe(
+        self,
+        connection_id: str,
+        thread_id: str | None = None,
+        budget: QueryBudget | None = None,
+        on_sql: SqlObserver | None = None,
+    ) -> ProbeResult:
         connection = self._store.get_connection(connection_id)
-        with self._executor(connection) as executor:
+        with self._executor(connection, thread_id, budget, on_sql) as executor:
             result = pg_probe.probe(executor)
         self._store.save_probe(connection.id, result)
         return result
@@ -65,6 +114,8 @@ class AnalyzerService:
         connection_id: str,
         analyzers: Sequence[AnalyzerName] = SUPPORTED_ANALYZERS,
         thread_id: str | None = None,
+        budget: QueryBudget | None = None,
+        on_sql: SqlObserver | None = None,
     ) -> Run:
         """A deterministic Run, no LLM: probe, measure, record Findings and Observations."""
         if unsupported := set(analyzers) - set(SUPPORTED_ANALYZERS):
@@ -72,7 +123,7 @@ class AnalyzerService:
         connection = self._store.get_connection(connection_id)
         run = self._store.start_run(connection.id, thread_id)
         try:
-            with self._executor(connection) as executor:
+            with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
                 measured = pg_inventory.storage_stats(executor, probe.server_version_num)
             self._store.save_probe(connection.id, probe)
@@ -109,10 +160,186 @@ class AnalyzerService:
     def audit(self, connection_id: str, thread_id: str | None = None) -> list[AuditEntry]:
         return self._store.audit(connection_id, thread_id)
 
+    # --- Threads and the agent ------------------------------------------------------------
+
+    def start_thread(self, connection_id: str) -> Thread:
+        """A new conversation, bound to this Connection for its whole life."""
+        return self._store.create_thread(connection_id)
+
+    def thread(self, thread_id: str) -> Thread:
+        return self._store.get_thread(thread_id)
+
+    def llm_requests(self, thread_id: str) -> list[LLMRequestLog]:
+        return self._store.llm_requests(thread_id)
+
+    def record_llm_request(self, thread_id: str, entry: LLMRequestLog) -> None:
+        self._store.record_llm_request(thread_id, entry)
+
+    def usage(self, thread_id: str) -> Usage:
+        """Tokens and estimated cost of every model request in the Thread so far."""
+        requests = self._store.llm_requests(thread_id)
+        costs = [r.cost_usd for r in requests]
+        return Usage(
+            model=", ".join(sorted({r.model for r in requests})) or self._llm.model,
+            input_tokens=sum(r.input_tokens for r in requests),
+            cached_tokens=sum(r.cached_tokens for r in requests),
+            output_tokens=sum(r.output_tokens for r in requests),
+            cost_usd=None if None in costs else sum(c for c in costs if c is not None),
+        )
+
+    async def send(self, thread_id: str, message: str) -> AsyncIterator[AgentEvent]:
+        """One Turn: stream the agent's events for `message`, ending with Usage and Done."""
+        thread = self._store.get_thread(thread_id)
+        settings = self._llm
+        translator = Translator()
+        config: Any = {"configurable": {"thread_id": thread.id}}
+        failed = False
+        async with (
+            AsyncSqliteSaver.from_conn_string(str(self._home / "checkpoints.sqlite")) as cp,
+            httpx.AsyncClient(timeout=settings.request_timeout_s) as http,
+        ):
+            agent, gateway = self._agent(thread, AgentTurn(self, thread), cp, http)
+            gateway.cassette = _cassette(settings, await _turns_so_far(agent, config))
+            try:
+                async for mode, chunk in agent.astream(
+                    {"messages": [HumanMessage(content=message)]},
+                    config,
+                    stream_mode=["messages", "updates", "custom"],
+                ):
+                    for event in translator.translate(mode, chunk):
+                        yield event
+            except (CassetteExhausted, CassetteMismatch):
+                raise  # a stale recording must fail the test, not become an event
+            except Exception as e:  # the Turn ends; the Thread stays usable
+                failed = True
+                yield Error(message=f"{type(e).__name__}: {e}")
+        yield gateway.usage()
+        yield Done(thread_id=thread.id, answer=translator.answer, ok=not failed)
+
+    def studio_graph(self, connection_name: str) -> Any:
+        """The agent for LangGraph Studio, which brings its own checkpointer. One Thread per
+        Studio server session records the SQL audit and model requests."""
+        thread = self.start_thread(self.connection(connection_name).id)
+        turn = AgentTurn(self, thread)
+        agent, _ = self._agent(thread, turn, None, None, extra=[NewTurn(turn)])
+        return agent
+
+    def _agent(
+        self,
+        thread: Thread,
+        turn: "AgentTurn",
+        checkpointer: Any,
+        http: httpx.AsyncClient | None,
+        extra: Sequence[Any] = (),
+    ) -> tuple[Any, LLMGateway]:
+        settings = self._llm
+        gateway = LLMGateway(settings, log=lambda entry: self.record_llm_request(thread.id, entry))
+        middleware = [
+            *extra,
+            TurnLimits(settings.max_tokens_per_turn, settings.max_tool_calls_per_turn),
+            StrictTools(),
+            gateway,
+        ]
+        tools = build_tools(turn, self.capabilities(thread.connection_id))
+        return build_agent(make_model(settings, http), tools, middleware, checkpointer), gateway
+
     @contextmanager
-    def _executor(self, connection: Connection) -> Iterator[SafeExecutor]:
+    def _executor(
+        self,
+        connection: Connection,
+        thread_id: str | None = None,
+        budget: QueryBudget | None = None,
+        on_sql: SqlObserver | None = None,
+    ) -> Iterator[SafeExecutor]:
         dsn = os.environ.get(connection.dsn_env)
         if not dsn:
             raise ConnectionRefused(f"environment variable {connection.dsn_env} is not set")
+
+        def audit(entry: AuditEntry) -> None:
+            self._store.record_audit(entry)
+            if on_sql is not None:
+                on_sql(entry)
+
         with open_session(dsn, connection.limits) as conn:
-            yield SafeExecutor(conn, connection.id, self._store.record_audit, connection.gate)
+            yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
+
+
+class AgentTurn:
+    """The TurnBackend the agent's tools call: one Thread's Connection, one Turn's query cap,
+    and SQL and Run events streamed to the caller. Failures come back as explicit errors, so
+    the model reports them instead of filling the gap (ADR 0003)."""
+
+    def __init__(self, service: AnalyzerService, thread: Thread):
+        self._service = service
+        self._thread = thread
+        self._budget = QueryBudget()
+
+    def new_turn(self) -> None:
+        """For hosts that reuse one backend across Turns (LangGraph Studio)."""
+        self._budget.reset()
+
+    def probe(self) -> dict[str, Any]:
+        return self._guarded(
+            lambda emit: digest.probe(
+                self._service.probe(
+                    self._thread.connection_id, self._thread.id, self._budget, _sql_events(emit)
+                )
+            )
+        )
+
+    def storage(self, top_n: int) -> dict[str, Any]:
+        def measure(emit: Callable[[Any], None]) -> dict[str, Any]:
+            run = self._service.run(
+                self._thread.connection_id,
+                ["inventory"],
+                self._thread.id,
+                self._budget,
+                _sql_events(emit),
+            )
+            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
+            return digest.storage(run, self._service.storage(run.id), top_n)
+
+        return self._guarded(measure)
+
+    def _guarded(self, work: Callable[[Callable[[Any], None]], dict[str, Any]]) -> dict[str, Any]:
+        emit = get_stream_writer()
+        try:
+            return work(emit)
+        except QueryCapReached as e:
+            used = self._budget.used
+            emit(LimitReached(limit="queries", used=used, max=e.limit).model_dump())
+            return {"error": e.reason}
+        except (QueryRejected, ConnectionRefused) as e:
+            return {"error": str(e)}
+        except psycopg.Error as e:
+            return {"error": f"database error: {str(e).strip()}"}
+
+
+class NewTurn(AgentMiddleware[Any, Any, Any]):
+    """Gives a reused AgentTurn a fresh query cap at the start of each agent invocation.
+    Studio runs that overlap in time share the cap: acceptable for a development tool."""
+
+    def __init__(self, turn: AgentTurn):
+        super().__init__()
+        self._turn = turn
+
+    def before_agent(self, state: Any, runtime: Any) -> None:
+        self._turn.new_turn()
+
+
+def _sql_events(emit: Callable[[Any], None]) -> SqlObserver:
+    return lambda entry: emit(from_audit(entry).model_dump())
+
+
+async def _turns_so_far(agent: Any, config: Any) -> int:
+    # The graph's state, not the latest checkpoint: a checkpoint stores only changed channels.
+    state = await agent.aget_state(config)
+    return sum(isinstance(m, HumanMessage) for m in state.values.get("messages", []))
+
+
+def _cassette(settings: LLMSettings, turn: int) -> Cassette | None:
+    """One cassette file per Turn, numbered within the Thread, so a resumed Thread replays the
+    right responses after a restart."""
+    if settings.cassette is None:
+        return None
+    return Cassette(settings.cassette / f"turn-{turn}.json", record=settings.record)

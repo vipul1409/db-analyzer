@@ -10,6 +10,10 @@ A conversational agent that explores a database through a read-only login and re
 A target the user configures, pointing at exactly one database.
 _Avoid_: Database (for the configured target), server, DSN
 
+**Capability**:
+Something the analyzer can do on a Connection, such as measuring storage or reading the workload, given its store type, extensions and privileges. The agent is offered a tool only for capabilities the Connection has.
+_Avoid_: Feature, permission
+
 **Auxiliary session**:
 An internal session a Connection opens to a second database it needs (e.g. `azure_sys` for Query Store), using the Connection's credentials and limits.
 _Avoid_: Second connection

@@ -1,0 +1,88 @@
+{
+ "calls": [
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "write_file"
+    ],
+    "messages": 1,
+    "last": "human"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "function_call",
+       "name": "get_storage_stats",
+       "arguments": "{\"top_n\":10}",
+       "call_id": "call_09cuXrpg3T83f6F5utVyPfYb",
+       "id": "fc_0f0fd057e72e757f016ac8a0daac9487d1bf1964662ccf4d45",
+       "index": 0
+      },
+      {
+       "type": "function_call",
+       "name": "probe",
+       "arguments": "{}",
+       "call_id": "call_3zoEUmzVi6IyPuZXMPDmyZKU",
+       "id": "fc_0f0fd057e72e757f016ac8a0daaca487d1945c31efc4c7cecc",
+       "index": 1
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_0f0fd057e72e757f016ac8a0da0b4c87d1839aeb5e1dc26223",
+      "created_at": 1791533274.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_0f0fd057e72e757f016ac8a0da0b4c87d1839aeb5e1dc26223",
+     "tool_calls": [
+      {
+       "name": "get_storage_stats",
+       "args": {
+        "top_n": 10
+       },
+       "id": "call_09cuXrpg3T83f6F5utVyPfYb",
+       "type": "tool_call"
+      },
+      {
+       "name": "probe",
+       "args": {},
+       "id": "call_3zoEUmzVi6IyPuZXMPDmyZKU",
+       "type": "tool_call"
+      }
+     ],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 1849,
+      "output_tokens": 48,
+      "total_tokens": 1897,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 1536
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  }
+ ]
+}

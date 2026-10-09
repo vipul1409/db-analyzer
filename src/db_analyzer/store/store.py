@@ -20,6 +20,7 @@ from db_analyzer.core.model import (
     Connection,
     Finding,
     GateLimits,
+    LLMRequestLog,
     Observation,
     Observed,
     ProbeResult,
@@ -27,15 +28,18 @@ from db_analyzer.core.model import (
     RunStatus,
     SessionLimits,
     StorageStats,
+    Thread,
 )
 from db_analyzer.store.models import (
     AuditRow,
     ConnectionRow,
     FindingRow,
+    LLMRequestRow,
     ObservationRow,
     ProbeRow,
     RunRow,
     SnapshotRow,
+    ThreadRow,
 )
 
 _STORAGE_STATS = "storage_stats"  # snapshots.kind for StorageStats; WorkloadItems come later
@@ -54,7 +58,12 @@ class Store:
         cfg.set_main_option("script_location", str(_MIGRATIONS))
         cfg.set_main_option("sqlalchemy.url", url)
         command.upgrade(cfg, "head")
-        self._engine = create_engine(url)
+        # The agent runs tools in parallel threads that all write here: WAL lets readers and
+        # one writer proceed together, and writers wait for the lock instead of failing.
+        # WAL is a property of the database file, so setting it once is enough.
+        self._engine = create_engine(url, connect_args={"timeout": 30})
+        with self._engine.connect() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")
 
     def upsert_connection(
         self,
@@ -216,6 +225,44 @@ class Store:
         with Session(self._engine) as s:
             return [_observation(r) for r in s.scalars(q.order_by(ObservationRow.id))]
 
+    def create_thread(self, connection_id: str) -> Thread:
+        row = ThreadRow(
+            id=uuid.uuid4().hex, connection_id=connection_id, created_at=datetime.now(UTC)
+        )
+        with Session(self._engine) as s, s.begin():
+            s.get_one(ConnectionRow, connection_id)
+            s.add(row)
+            return _thread(row)
+
+    def get_thread(self, thread_id: str) -> Thread:
+        with Session(self._engine) as s:
+            row = s.get(ThreadRow, thread_id)
+            if row is None:
+                raise KeyError(f"unknown thread {thread_id}")
+            return _thread(row)
+
+    def record_llm_request(self, thread_id: str, entry: LLMRequestLog) -> None:
+        with Session(self._engine) as s, s.begin():
+            s.add(LLMRequestRow(thread_id=thread_id, **dataclasses.asdict(entry)))
+
+    def llm_requests(self, thread_id: str) -> list[LLMRequestLog]:
+        q = select(LLMRequestRow).where(LLMRequestRow.thread_id == thread_id)
+        with Session(self._engine) as s:
+            return [
+                LLMRequestLog(
+                    model=r.model,
+                    at=r.at.replace(tzinfo=UTC),
+                    duration_ms=r.duration_ms,
+                    request=r.request,
+                    response=r.response,
+                    input_tokens=r.input_tokens,
+                    cached_tokens=r.cached_tokens,
+                    output_tokens=r.output_tokens,
+                    cost_usd=r.cost_usd,
+                )
+                for r in s.scalars(q.order_by(LLMRequestRow.id))
+            ]
+
     def record_audit(self, entry: AuditEntry) -> None:
         with Session(self._engine) as s, s.begin():
             s.add(AuditRow(**dataclasses.asdict(entry)))
@@ -236,6 +283,12 @@ def _connection(row: ConnectionRow) -> Connection:
         dsn_env=row.dsn_env,
         limits=SessionLimits(**json.loads(row.limits_json)),
         gate=GateLimits(**json.loads(row.gate_json)),
+    )
+
+
+def _thread(row: ThreadRow) -> Thread:
+    return Thread(
+        id=row.id, connection_id=row.connection_id, created_at=row.created_at.replace(tzinfo=UTC)
     )
 
 
