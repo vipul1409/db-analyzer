@@ -11,6 +11,8 @@ export DBX_DSN='postgresql://db_analyzer:<secret>@host:5432/app'
 uv run dbx connect prod     # probe the database and show what the analyzer can see
 ```
 
+Secrets come from the environment. Copy `.env.example` to `.env` (git-ignored), fill in `OPENAI_API_KEY`, and load it with `uv run --env-file .env …`.
+
 The DSN stays in the environment; only the variable name is stored (in `~/.db-analyzer`, or `$DBX_HOME`).
 
 ## Development
