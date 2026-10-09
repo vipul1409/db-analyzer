@@ -22,6 +22,20 @@ x-pg: &pg
     timeout: 3s
     retries: 30
 
+x-standby: &standby
+  profiles: ["standby"]
+  volumes:
+    - ./postgres/standby.sh:/standby.sh:ro
+  entrypoint: ["/standby.sh"]
+  command:
+    - -c
+    - shared_preload_libraries=pg_stat_statements
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+
 services:
   pg14:
     <<: *pg
@@ -48,3 +62,18 @@ services:
     build: { context: ./postgres, args: { PG_MAJOR: "18" } }
     image: db-analyzer-fixture-pg:18
     ports: ["5418:5432"]
+
+  # Hot standbys for the generic-plan spike (#4): `make db-up PG="pg15 pg15-standby"`.
+  # Host port = 5500 + major version.
+  pg15-standby:
+    <<: *standby
+    image: db-analyzer-fixture-pg:15
+    environment: { PRIMARY: pg15 }
+    depends_on: { pg15: { condition: service_healthy } }
+    ports: ["5515:5432"]
+  pg16-standby:
+    <<: *standby
+    image: db-analyzer-fixture-pg:16
+    environment: { PRIMARY: pg16 }
+    depends_on: { pg16: { condition: service_healthy } }
+    ports: ["5516:5432"]

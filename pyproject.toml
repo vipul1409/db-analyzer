@@ -50,4 +50,5 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: needs the Docker Postgres fixtures (`make db-up`)",
+    "spike: throwaway experiment, run by hand (`uv run pytest -m spike -s`)",
 ]

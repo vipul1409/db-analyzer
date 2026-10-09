@@ -32,4 +32,6 @@ make db-down                # stop and remove the fixtures
 
 `make db-seed PG=17 SCALE=full` seeds roughly 5–10 GB for manual and scale testing; expect it to take several minutes.
 
+Hot standbys for PG 15 and 16 (ports 5515/5516) are behind a compose profile: `make db-up PG="pg15 pg16 pg15-standby pg16-standby"`. Spikes (`tests/spikes`) are run by hand with `uv run pytest -m spike -s`.
+
 Start a subset of fixtures with `make db-up PG="pg15 pg16"` and point the integration tests at them with `DBX_TEST_PG_VERSIONS=15,16`.

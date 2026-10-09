@@ -158,7 +158,7 @@ The guard has two **profiles**; the caller cannot choose its own:
 | Profile | Used by | Difference |
 |---|---|---|
 | **Agent** | `run_readonly_sql` and any SQL text that came from the LLM | `EXPLAIN` may wrap only a `SELECT` that would itself pass the guard. No `PREPARE` / `EXECUTE` / `DEALLOCATE`, no `SET LOCAL` |
-| **Internal** | Vetted templates and the generic-plan path (§5.3) | `EXPLAIN` (and `PREPARE` for `EXPLAIN EXECUTE`) may also wrap DML, but only statement text taken verbatim from the workload source (`pg_stat_statements` / Query Store), never text the LLM wrote or edited |
+| **Internal** | Vetted templates and the generic-plan path (§5.3) | `PREPARE` / `EXPLAIN EXECUTE` / `DEALLOCATE` and `SET LOCAL plan_cache_mode`, wrapping only SELECTs taken verbatim from the workload source (`pg_stat_statements` / Query Store) or produced by the DML-to-SELECT rewrite, never text the LLM wrote or edited. EXPLAIN never wraps DML in any profile (ADR 0002) |
 
 Allowed (both profiles unless noted):
 
@@ -385,9 +385,9 @@ Output: top-N tables by total size, schema rollups, estimate-vs-exact flag per r
 **Getting plans for normalized queries on PG 15.** `pg_stat_statements` stores `$1, $2…` placeholders. `EXPLAIN (GENERIC_PLAN)` only exists from PG 16, so the adapter uses two paths:
 
 - **PG 16+:** `EXPLAIN (GENERIC_PLAN, FORMAT JSON) <query>`.
-- **PG 15:** within a read-only transaction (internal guard profile, §3.3): `SET LOCAL plan_cache_mode = force_generic_plan; PREPARE q AS <query>; EXPLAIN (FORMAT JSON) EXECUTE q(NULL, …); DEALLOCATE q;` (number of NULLs from the parameter count).
+- **PG 15:** within a read-only transaction (internal guard profile, §3.3): `SET LOCAL plan_cache_mode = force_generic_plan; PREPARE q AS <query>; EXPLAIN (FORMAT JSON) EXECUTE q(NULL, …); DEALLOCATE q;` (number of NULLs from the parameter count; a unique name per call, deallocated even on error, because a prepared statement survives rollback).
 
-DML statements found in `pg_stat_statements` (e.g. slow `UPDATE`s) are **only EXPLAINed, never executed**; plain EXPLAIN does not run the statement and is permitted in a read-only transaction. This path must be covered by a spike + tests (§10 Phase 0).
+DML statements found in `pg_stat_statements` (e.g. slow `UPDATE`s) are **never executed or EXPLAINed directly**: EXPLAIN checks table privileges and the read-only role has no UPDATE/DELETE grant. Instead `UPDATE/DELETE … WHERE c` is rewritten to `SELECT 1 FROM <target> … WHERE c` and that row-finding part is planned (ADR 0002). The workload provider excludes the analyzer role's own statements (`userid`), which `track = all` would otherwise record.
 
 **Plan analysis (deterministic rules)** over the normalized plan tree:
 

@@ -19,7 +19,7 @@ typecheck:
 
 # Exit code 5 = no tests collected; an empty suite counts as passing.
 test:
-	uv run pytest -m "not integration" || [ $$? -eq 5 ]
+	uv run pytest -m "not integration and not spike" || [ $$? -eq 5 ]
 
 test-integration:
 	uv run pytest -m integration
