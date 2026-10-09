@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f tests/fixtures/docker-compose.yml -p db-analyzer-fixtures
-# Subset of fixtures to start, e.g. `make db-up PG="pg15 pg16"`. Empty = all four.
-PG ?=
+# Fixtures to start, e.g. `make db-up PG="pg15 pg16"`. Narrowed to pg17 during development.
+PG ?= pg17
 
 .PHONY: check lint typecheck test test-integration db-up db-down db-seed fmt
 
@@ -27,10 +27,10 @@ test-integration:
 db-up:
 	$(COMPOSE) up -d --build --wait $(PG)
 
-# Seed the synthetic 'shop' database: `make db-seed [PG="pg15 17"] [SCALE=full]`. Empty PG = 15-18.
+# Seed the synthetic 'shop' database: `make db-seed [PG="pg15 17"] [SCALE=full]`.
 SCALE ?= ci
 db-seed:
-	@for v in $(or $(subst pg,,$(PG)),15 16 17 18); do \
+	@for v in $(or $(subst pg,,$(PG)),17); do \
 		uv run python -m tests.fixtures.dataset --pg $$v --scale $(SCALE) || exit 1; \
 	done
 

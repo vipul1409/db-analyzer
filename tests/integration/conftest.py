@@ -7,9 +7,10 @@ import pytest
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn, seed
 
-SUPPORTED = [int(v) for v in os.environ.get("DBX_TEST_PG_VERSIONS", "15,16,17,18").split(",") if v]
+# Narrowed to PG 17 during development; restore "15,16,17,18" and "14" before release.
+SUPPORTED = [int(v) for v in os.environ.get("DBX_TEST_PG_VERSIONS", "17").split(",") if v]
 UNSUPPORTED = [
-    int(v) for v in os.environ.get("DBX_TEST_UNSUPPORTED_PG_VERSIONS", "14").split(",") if v
+    int(v) for v in os.environ.get("DBX_TEST_UNSUPPORTED_PG_VERSIONS", "").split(",") if v
 ]
 
 

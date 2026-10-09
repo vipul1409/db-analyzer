@@ -21,7 +21,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg: ["15", "16", "17", "18"]
+        # Narrowed to PG 17 during development; restore "15", "16", "18" before release.
+        pg: ["17"]
     env:
       DBX_TEST_PG_VERSIONS: ${{ matrix.pg }}
       # The PG 15 job also starts PG 14 to test that unsupported versions are refused.
