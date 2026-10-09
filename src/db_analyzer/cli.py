@@ -1,6 +1,9 @@
 """`dbx` command line. A thin layer over AnalyzerService."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
 import psycopg
@@ -8,7 +11,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from db_analyzer.core.model import ConnectionRefused, ProbeResult
+from db_analyzer.core.model import ConnectionRefused, ProbeResult, QueryRejected, Run
+from db_analyzer.core.units import format_bytes
 from db_analyzer.service import AnalyzerService
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -32,18 +36,67 @@ def connect(
     """Add (or update) a Connection to one database and show what the analyzer can see."""
     service = AnalyzerService()
     connection = service.add_connection(name=name, dsn_env=dsn_env)
-    try:
+    with _database_errors("Probe failed"):
         probe = service.probe(connection.id)
+    _render_probe(name, probe)
+
+
+@app.command()
+def analyze(
+    name: Annotated[str, typer.Argument(help="Connection to analyse (see `dbx connect`).")],
+    report: Annotated[
+        Path | None, typer.Option(help="Write a Markdown report of the Run to this file.")
+    ] = None,
+) -> None:
+    """Run the deterministic inventory analysis (no LLM) and show tables by size."""
+    service = AnalyzerService()
+    try:
+        connection = service.connection(name)
+    except KeyError as e:
+        console.print(f"[bold red]No Connection named {name!r}.[/] Add it with `dbx connect`.")
+        raise typer.Exit(1) from e
+    with _database_errors("Analysis failed"):
+        run = service.run(connection.id, analyzers=["inventory"])
+    _render_run(service, run)
+    if report is not None:
+        report.write_bytes(service.export(run.id, "md"))
+        console.print(f"Report written to [bold]{report}[/]")
+
+
+@contextmanager
+def _database_errors(failed: str) -> Iterator[None]:
+    try:
+        yield
     except ConnectionRefused as e:
         console.print(f"[bold red]Refused:[/] {e}")
+        raise typer.Exit(1) from e
+    except QueryRejected as e:
+        console.print(f"[bold red]{failed}:[/] a query was rejected: {e.reason}")
         raise typer.Exit(1) from e
     except psycopg.OperationalError as e:
         console.print(f"[bold red]Cannot connect:[/] {str(e).strip()}")
         raise typer.Exit(1) from e
     except psycopg.Error as e:
-        console.print(f"[bold red]Probe failed:[/] {str(e).strip()}")
+        console.print(f"[bold red]{failed}:[/] {str(e).strip()}")
         raise typer.Exit(1) from e
-    _render_probe(name, probe)
+
+
+def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
+    measured = sorted(service.storage(run.id), key=lambda s: -s.total_bytes)
+    table = Table(title=f"Largest of {len(measured)} tables (Run {run.id[:8]}, {run.status})")
+    for column in ("#", "Table", "Total", "Heap", "Indexes", "TOAST", "Rows (estimate)"):
+        table.add_column(column, justify="left" if column == "Table" else "right")
+    for rank, s in enumerate(measured[:top], start=1):
+        table.add_row(
+            str(rank),
+            s.ref.qualified,
+            format_bytes(s.total_bytes),
+            format_bytes(s.data_bytes),
+            format_bytes(s.index_bytes),
+            format_bytes(s.toast_bytes) if s.toast_bytes is not None else "-",
+            "unknown" if s.row_count is None else f"{s.row_count:,}",
+        )
+    console.print(table)
 
 
 def _render_probe(name: str, p: ProbeResult) -> None:

@@ -1,8 +1,10 @@
 """Store-agnostic domain types. Terms follow CONTEXT.md."""
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from enum import StrEnum
+from typing import Any, Literal
 
 HostType = Literal["self_managed", "azure_flexible"]
 AuditDecision = Literal["executed", "rejected", "failed"]
@@ -16,6 +18,15 @@ class SessionLimits:
 
 
 @dataclass(frozen=True)
+class GateLimits:
+    """EXPLAIN gate limits; a statement whose plan exceeds any of them is not run."""
+
+    max_total_cost: float = 2_000_000  # planner cost units
+    max_result_rows: int = 10_000  # rows returned to the caller
+    max_scan_rows: int = 50_000_000  # rows any single scan may touch
+
+
+@dataclass(frozen=True)
 class Connection:
     """A configured target: exactly one database. Holds a reference to the DSN, never the DSN."""
 
@@ -24,6 +35,7 @@ class Connection:
     adapter_kind: str
     dsn_env: str
     limits: SessionLimits = field(default_factory=SessionLimits)
+    gate: GateLimits = field(default_factory=GateLimits)
 
 
 @dataclass(frozen=True)
@@ -57,6 +69,124 @@ class ProbeResult:
     taken_at: datetime
 
 
+class CollectionKind(StrEnum):
+    TABLE = "table"
+    PARTITIONED_TABLE = "partitioned_table"
+    MATVIEW = "matview"
+
+
+@dataclass(frozen=True)
+class CollectionRef:
+    namespace: str | None
+    name: str
+    kind: CollectionKind
+
+    @property
+    def qualified(self) -> str:
+        """Schema-qualified name, quoted only where Postgres would need it."""
+        return ".".join(_quote(p) for p in (self.namespace, self.name) if p is not None)
+
+
+def _quote(identifier: str) -> str:
+    if re.fullmatch(r"[a-z_][a-z0-9_$]*", identifier):
+        return identifier
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+RowCountMethod = Literal["exact", "estimate", "sample"]
+
+
+@dataclass(frozen=True)
+class StorageStats:
+    """Size of one collection. `row_count` is None when the store has no estimate yet."""
+
+    ref: CollectionRef
+    row_count: int | None
+    row_count_method: RowCountMethod
+    data_bytes: int
+    index_bytes: int
+    toast_bytes: int | None
+    total_bytes: int
+
+
+AnalyzerName = Literal["inventory", "workload", "index_advice", "hotspot"]
+RunStatus = Literal["running", "complete", "partial", "failed"]
+
+
+@dataclass(frozen=True)
+class Run:
+    """One execution of analyzers against a Connection. `scope` lists, per analyzer, the
+    collections actually measured; `skipped` those planned but not measured, with the reason."""
+
+    id: str
+    connection_id: str
+    thread_id: str | None
+    scope: dict[AnalyzerName, list[CollectionRef]]
+    skipped: dict[AnalyzerName, list[tuple[CollectionRef, str]]]
+    started_at: datetime
+    finished_at: datetime | None
+    status: RunStatus
+
+
+FindingCategory = Literal[
+    "size",
+    "slow_query",
+    "missing_index",
+    "unused_index",
+    "duplicate_index",
+    "invalid_index",
+    "bloat",
+    "stale_stats",
+    "hotspot",
+    "config",
+]
+FindingStatus = Literal["open", "acknowledged", "fixed", "obsolete"]
+Severity = Literal["info", "low", "medium", "high"]
+
+
+@dataclass(frozen=True)
+class Observed:
+    """What an analyzer saw in this Run, before it is recorded as a Finding and Observation."""
+
+    category: FindingCategory
+    subject: str
+    severity: Severity
+    title: str
+    evidence: dict[str, Any]
+    recommendation: str | None = None
+    ddl: str | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        return f"{self.category}:{self.subject}"
+
+
+@dataclass(frozen=True)
+class Finding:
+    """A problem or fact about one subject, with an identity stable across Runs."""
+
+    connection_id: str
+    fingerprint: str
+    category: FindingCategory
+    subject: str
+    status: FindingStatus
+    first_seen_run: str
+    last_seen_run: str
+
+
+@dataclass(frozen=True)
+class Observation:
+    """What one Run saw for one Finding."""
+
+    run_id: str
+    fingerprint: str
+    severity: Severity
+    title: str
+    evidence: dict[str, Any]
+    recommendation: str | None
+    ddl: str | None
+
+
 @dataclass(frozen=True)
 class AuditEntry:
     connection_id: str
@@ -80,3 +210,16 @@ class QueryRejected(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+GateMetric = Literal["total_cost", "result_rows", "scan_rows"]
+
+
+class GateRejected(QueryRejected):
+    """The EXPLAIN gate refused a statement: its plan exceeds one of the GateLimits."""
+
+    def __init__(self, metric: GateMetric, value: float, limit: float) -> None:
+        super().__init__(f"{metric.replace('_', ' ')} {value:.2g} > {limit:.2g}")
+        self.metric = metric
+        self.value = value
+        self.limit = limit

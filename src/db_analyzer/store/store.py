@@ -5,14 +5,43 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, select
+from sqlalchemy import ColumnElement, create_engine, select
 from sqlalchemy.orm import Session
 
-from db_analyzer.core.model import AuditEntry, Connection, ProbeResult, SessionLimits
-from db_analyzer.store.models import AuditRow, ConnectionRow, ProbeRow
+from db_analyzer.core.model import (
+    AnalyzerName,
+    AuditEntry,
+    CollectionKind,
+    CollectionRef,
+    Connection,
+    Finding,
+    GateLimits,
+    Observation,
+    Observed,
+    ProbeResult,
+    Run,
+    RunStatus,
+    SessionLimits,
+    StorageStats,
+)
+from db_analyzer.store.models import (
+    AuditRow,
+    ConnectionRow,
+    FindingRow,
+    ObservationRow,
+    ProbeRow,
+    RunRow,
+    SnapshotRow,
+)
+
+_STORAGE_STATS = "storage_stats"  # snapshots.kind for StorageStats; WorkloadItems come later
+
+Scope = dict[AnalyzerName, list[CollectionRef]]
+Skipped = dict[AnalyzerName, list[tuple[CollectionRef, str]]]
 
 _MIGRATIONS = Path(__file__).parent / "migrations"
 
@@ -28,9 +57,15 @@ class Store:
         self._engine = create_engine(url)
 
     def upsert_connection(
-        self, name: str, adapter_kind: str, dsn_env: str, limits: SessionLimits | None
+        self,
+        name: str,
+        adapter_kind: str,
+        dsn_env: str,
+        limits: SessionLimits | None,
+        gate: GateLimits | None,
     ) -> Connection:
-        """Create or update by name. `limits=None` keeps existing limits (defaults if new)."""
+        """Create or update by name. `limits=None` / `gate=None` keep the existing limits
+        (defaults if new)."""
         with Session(self._engine) as s, s.begin():
             row = s.scalars(select(ConnectionRow).where(ConnectionRow.name == name)).first()
             if row is None:
@@ -40,6 +75,15 @@ class Store:
             row.dsn_env = dsn_env
             if limits is not None or row.limits_json is None:
                 row.limits_json = json.dumps(dataclasses.asdict(limits or SessionLimits()))
+            if gate is not None or row.gate_json is None:
+                row.gate_json = json.dumps(dataclasses.asdict(gate or GateLimits()))
+            return _connection(row)
+
+    def find_connection(self, name: str) -> Connection:
+        with Session(self._engine) as s:
+            row = s.scalars(select(ConnectionRow).where(ConnectionRow.name == name)).first()
+            if row is None:
+                raise KeyError(f"no connection named {name!r}")
             return _connection(row)
 
     def get_connection(self, connection_id: str) -> Connection:
@@ -58,6 +102,119 @@ class Store:
                     result_json=json.dumps(dataclasses.asdict(result), default=str),
                 )
             )
+
+    def start_run(self, connection_id: str, thread_id: str | None) -> Run:
+        row = RunRow(
+            id=uuid.uuid4().hex,
+            connection_id=connection_id,
+            thread_id=thread_id,
+            scope_json="{}",
+            skipped_json="{}",
+            started_at=datetime.now(UTC),
+            finished_at=None,
+            status="running",
+        )
+        with Session(self._engine) as s, s.begin():
+            s.add(row)
+            return _run(row)
+
+    def finish_run(self, run_id: str, status: RunStatus, scope: Scope, skipped: Skipped) -> Run:
+        with Session(self._engine) as s, s.begin():
+            row = s.get_one(RunRow, run_id)
+            row.status = status
+            row.scope_json = json.dumps(
+                {a: [_ref_json(r) for r in refs] for a, refs in scope.items()}
+            )
+            row.skipped_json = json.dumps(
+                {a: [[_ref_json(r), why] for r, why in items] for a, items in skipped.items()}
+            )
+            row.finished_at = datetime.now(UTC)
+            return _run(row)
+
+    def get_run(self, run_id: str) -> Run:
+        with Session(self._engine) as s:
+            return _run(s.get_one(RunRow, run_id))
+
+    def runs(self, connection_id: str) -> list[Run]:
+        q = select(RunRow).where(RunRow.connection_id == connection_id)
+        with Session(self._engine) as s:
+            return [_run(r) for r in s.scalars(q.order_by(RunRow.started_at))]
+
+    def save_snapshots(self, run_id: str, measured: list[StorageStats]) -> None:
+        with Session(self._engine) as s, s.begin():
+            s.add_all(
+                SnapshotRow(
+                    run_id=run_id,
+                    kind=_STORAGE_STATS,
+                    subject=m.ref.qualified,
+                    data_json=json.dumps(dataclasses.asdict(m)),
+                )
+                for m in measured
+            )
+
+    def snapshots(self, run_id: str) -> list[StorageStats]:
+        q = select(SnapshotRow).where(
+            SnapshotRow.run_id == run_id, SnapshotRow.kind == _STORAGE_STATS
+        )
+        with Session(self._engine) as s:
+            return [
+                _storage_stats(json.loads(r.data_json))
+                for r in s.scalars(q.order_by(SnapshotRow.id))
+            ]
+
+    def record_observations(
+        self, connection_id: str, run_id: str, observed: list[Observed]
+    ) -> None:
+        """Upsert each Finding by fingerprint and add this Run's Observation of it."""
+        with Session(self._engine) as s, s.begin():
+            for o in observed:
+                finding = s.scalars(
+                    select(FindingRow).where(
+                        FindingRow.connection_id == connection_id,
+                        FindingRow.fingerprint == o.fingerprint,
+                    )
+                ).first()
+                if finding is None:
+                    finding = FindingRow(
+                        connection_id=connection_id,
+                        fingerprint=o.fingerprint,
+                        category=o.category,
+                        subject=o.subject,
+                        status="open",
+                        first_seen_run=run_id,
+                    )
+                    s.add(finding)
+                finding.last_seen_run = run_id
+                s.flush()
+                s.add(
+                    ObservationRow(
+                        finding_id=finding.id,
+                        run_id=run_id,
+                        severity=o.severity,
+                        title=o.title,
+                        evidence_json=json.dumps(o.evidence),
+                        recommendation=o.recommendation,
+                        ddl=o.ddl,
+                    )
+                )
+
+    def findings(self, connection_id: str) -> list[Finding]:
+        q = select(FindingRow).where(FindingRow.connection_id == connection_id)
+        with Session(self._engine) as s:
+            return [_finding(r) for r in s.scalars(q.order_by(FindingRow.id))]
+
+    def observations(self, connection_id: str, fingerprint: str) -> list[Observation]:
+        return self._observations(
+            FindingRow.connection_id == connection_id, FindingRow.fingerprint == fingerprint
+        )
+
+    def run_observations(self, run_id: str) -> list[Observation]:
+        return self._observations(ObservationRow.run_id == run_id)
+
+    def _observations(self, *where: ColumnElement[bool]) -> list[Observation]:
+        q = select(ObservationRow).join(ObservationRow.finding).where(*where)
+        with Session(self._engine) as s:
+            return [_observation(r) for r in s.scalars(q.order_by(ObservationRow.id))]
 
     def record_audit(self, entry: AuditEntry) -> None:
         with Session(self._engine) as s, s.begin():
@@ -78,6 +235,58 @@ def _connection(row: ConnectionRow) -> Connection:
         adapter_kind=row.adapter_kind,
         dsn_env=row.dsn_env,
         limits=SessionLimits(**json.loads(row.limits_json)),
+        gate=GateLimits(**json.loads(row.gate_json)),
+    )
+
+
+def _ref_json(ref: CollectionRef) -> dict[str, str | None]:
+    return {"namespace": ref.namespace, "name": ref.name, "kind": ref.kind.value}
+
+
+def _ref(data: dict[str, str]) -> CollectionRef:
+    return CollectionRef(data["namespace"], data["name"], CollectionKind(data["kind"]))
+
+
+def _run(row: RunRow) -> Run:
+    scope = json.loads(row.scope_json)
+    skipped = json.loads(row.skipped_json)
+    return Run(
+        id=row.id,
+        connection_id=row.connection_id,
+        thread_id=row.thread_id,
+        scope={a: [_ref(r) for r in refs] for a, refs in scope.items()},
+        skipped={a: [(_ref(r), why) for r, why in items] for a, items in skipped.items()},
+        started_at=row.started_at.replace(tzinfo=UTC),
+        finished_at=row.finished_at.replace(tzinfo=UTC) if row.finished_at else None,
+        status=row.status,  # type: ignore[arg-type]
+    )
+
+
+def _storage_stats(data: dict[str, Any]) -> StorageStats:
+    return StorageStats(**{**data, "ref": _ref(data["ref"])})
+
+
+def _finding(row: FindingRow) -> Finding:
+    return Finding(
+        connection_id=row.connection_id,
+        fingerprint=row.fingerprint,
+        category=row.category,  # type: ignore[arg-type]
+        subject=row.subject,
+        status=row.status,  # type: ignore[arg-type]
+        first_seen_run=row.first_seen_run,
+        last_seen_run=row.last_seen_run,
+    )
+
+
+def _observation(row: ObservationRow) -> Observation:
+    return Observation(
+        run_id=row.run_id,
+        fingerprint=row.finding.fingerprint,
+        severity=row.severity,  # type: ignore[arg-type]
+        title=row.title,
+        evidence=json.loads(row.evidence_json),
+        recommendation=row.recommendation,
+        ddl=row.ddl,
     )
 
 

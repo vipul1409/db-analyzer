@@ -5,7 +5,13 @@ import psycopg
 import pytest
 
 from db_analyzer.adapters.postgres.session import open_session
-from db_analyzer.core.model import AuditEntry, QueryRejected, SessionLimits
+from db_analyzer.core.model import (
+    AuditEntry,
+    GateLimits,
+    GateRejected,
+    QueryRejected,
+    SessionLimits,
+)
 from db_analyzer.safety.executor import SafeExecutor
 
 from .conftest import SUPPORTED, dsn
@@ -76,3 +82,25 @@ def test_executed_statement_is_audited_with_rows(session: psycopg.Connection[Any
 
     assert [r["n"] for r in rows] == [1, 2, 3]
     assert [(e.decision, e.row_count) for e in audit] == [("executed", 3)]
+
+
+def test_statement_over_gate_limits_is_rejected_and_audited(
+    session: psycopg.Connection[Any],
+) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append, gate=GateLimits(max_result_rows=10))
+    sql = "SELECT generate_series(1, 1000) AS n"
+
+    with pytest.raises(GateRejected) as e:
+        executor.execute(sql, purpose="test")
+
+    assert e.value.metric == "result_rows"
+    assert [(a.sql, a.decision, a.reason) for a in audit] == [(sql, "rejected", e.value.reason)]
+
+
+def test_statement_within_gate_limits_runs(session: psycopg.Connection[Any]) -> None:
+    executor = SafeExecutor(
+        session, "c1", audit=lambda _: None, gate=GateLimits(max_result_rows=10)
+    )
+
+    assert len(executor.execute("SELECT generate_series(1, 5) AS n", purpose="test")) == 5
