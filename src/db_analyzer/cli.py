@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import psycopg
 import typer
@@ -16,14 +16,17 @@ from rich.table import Table
 from db_analyzer.agent.events import AgentEvent
 from db_analyzer.agent.llm import LLMConfigError
 from db_analyzer.core.model import (
+    Connection,
     ConnectionRefused,
+    FindingStatus,
     ProbeResult,
     QueryRejected,
     Run,
+    SettableStatus,
     UnknownCollections,
 )
 from db_analyzer.core.units import format_bytes
-from db_analyzer.service import AnalyzerService
+from db_analyzer.service import CURRENT_STATUSES, AnalyzerService
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -67,7 +70,10 @@ def connect(
 def analyze(
     name: Annotated[str, typer.Argument(help="Connection to analyse (see `dbx connect`).")],
     report: Annotated[
-        Path | None, typer.Option(help="Write a Markdown report of the Run to this file.")
+        Path | None,
+        typer.Option(
+            help="Write a report of the Run to this file: JSON if it ends in .json, else Markdown."
+        ),
     ] = None,
     table: Annotated[
         list[str] | None,
@@ -83,11 +89,7 @@ def analyze(
 ) -> None:
     """Run the deterministic inventory analysis (no LLM): tables by size and ranked Findings."""
     service = AnalyzerService()
-    try:
-        connection = service.connection(name)
-    except KeyError as e:
-        console.print(f"[bold red]No Connection named {name!r}.[/] Add it with `dbx connect`.")
-        raise typer.Exit(1) from e
+    connection = _connection(service, name)
     with _database_errors("Analysis failed"):
         try:
             run = service.run(
@@ -98,8 +100,148 @@ def analyze(
             raise typer.Exit(1) from e
     _render_run(service, run)
     if report is not None:
-        report.write_bytes(service.export(run.id, "md"))
+        fmt: Literal["md", "json"] = "json" if report.suffix.lower() == ".json" else "md"
+        report.write_bytes(service.export(run.id, fmt))
         console.print(f"Report written to [bold]{report}[/]")
+
+
+@app.command()
+def findings(
+    name: Annotated[str, typer.Argument(help="Connection (see `dbx connect`).")],
+    all_: Annotated[
+        bool, typer.Option("--all", help="Include obsolete Findings (subject no longer exists).")
+    ] = False,
+) -> None:
+    """List the Connection's Findings with their status. "fixed?" marks a Finding the latest
+    Run covering its subject did not observe: confirm with `dbx fixed`."""
+    service = AnalyzerService()
+    connection = _connection(service, name)
+    statuses: tuple[FindingStatus, ...] = (
+        (*CURRENT_STATUSES, "obsolete") if all_ else CURRENT_STATUSES
+    )
+    listed = service.findings(connection.id, statuses)
+    if not listed:
+        console.print("No Findings yet. Run `dbx analyze` first.")
+        return
+    table = Table(title=f"Findings on '{name}'")
+    for column in ("Fingerprint", "Status", "Last seen", ""):
+        table.add_column(column)
+    for f in listed:
+        table.add_row(
+            escape(f.fingerprint),
+            f.status,
+            f"Run {f.last_seen_run[:8]}",
+            "[yellow]fixed?[/]" if f.unobserved_by else "",
+        )
+    console.print(table)
+
+
+@app.command()
+def ack(
+    name: Annotated[str, typer.Argument(help="Connection.")],
+    fingerprint: Annotated[str, typer.Argument(help="Finding to acknowledge.")],
+) -> None:
+    """Acknowledge a Finding: it stays acknowledged when later Runs observe it again."""
+    _set_status(name, fingerprint, "acknowledged")
+
+
+@app.command()
+def fixed(
+    name: Annotated[str, typer.Argument(help="Connection.")],
+    fingerprint: Annotated[str, typer.Argument(help="Finding to mark fixed.")],
+) -> None:
+    """Confirm a Finding fixed. A later Run that observes it again reopens it."""
+    _set_status(name, fingerprint, "fixed")
+
+
+@app.command()
+def reopen(
+    name: Annotated[str, typer.Argument(help="Connection.")],
+    fingerprint: Annotated[str, typer.Argument(help="Finding to reopen.")],
+) -> None:
+    """Set a Finding back to open, e.g. to answer "fixed?" with no."""
+    _set_status(name, fingerprint, "open")
+
+
+@app.command()
+def runs(name: Annotated[str, typer.Argument(help="Connection.")]) -> None:
+    """List the Connection's Runs, oldest first."""
+    service = AnalyzerService()
+    connection = _connection(service, name)
+    table = Table(title=f"Runs on '{name}'")
+    for column in ("Run", "Started", "Status", "Measured", "Skipped"):
+        table.add_column(column)
+    for r in service.runs(connection.id):
+        table.add_row(
+            r.id[:8],
+            r.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            r.status,
+            str(sum(len(refs) for refs in r.scope.values())),
+            str(sum(len(items) for items in r.skipped.values())),
+        )
+    console.print(table)
+
+
+@app.command()
+def compare(
+    name: Annotated[str, typer.Argument(help="Connection.")],
+    run_a: Annotated[str, typer.Argument(help="A Run id, or its first characters.")],
+    run_b: Annotated[str, typer.Argument(help="Another Run id, or its first characters.")],
+) -> None:
+    """Compare two Runs over the collections both measured: size changes and Findings that
+    appeared or disappeared. Collections only one Run measured are listed, not compared."""
+    service = AnalyzerService()
+    connection = _connection(service, name)
+    known = [r.id for r in service.runs(connection.id)]
+    c = service.compare_runs(_run_id(known, run_a), _run_id(known, run_b))
+    shared = sum(len(names) for names in c.shared.values())
+    console.print(f"Run {c.before[:8]} → Run {c.after[:8]}, over {shared} shared collections")
+    table = Table(title="Size changes")
+    for column in ("Table", "Before", "After", "Change"):
+        table.add_column(column, justify="left" if column == "Table" else "right")
+    for change in c.size_changes:
+        sign = "+" if change.delta_bytes >= 0 else "-"
+        table.add_row(
+            change.collection,
+            format_bytes(change.before_bytes),
+            format_bytes(change.after_bytes),
+            sign + format_bytes(abs(change.delta_bytes)),
+        )
+    console.print(table)
+    for fingerprint in c.appeared:
+        console.print(f"[red]appeared:[/] {escape(fingerprint)}")
+    for fingerprint in c.disappeared:
+        console.print(f"[green]disappeared:[/] {escape(fingerprint)}")
+    for analyzer, names in c.not_compared.items():
+        console.print(f"[dim]{analyzer}, not compared (one Run only): {', '.join(names)}[/]")
+
+
+def _connection(service: AnalyzerService, name: str) -> Connection:
+    try:
+        return service.connection(name)
+    except KeyError as e:
+        console.print(f"[bold red]No Connection named {name!r}.[/] Add it with `dbx connect`.")
+        raise typer.Exit(1) from e
+
+
+def _set_status(name: str, fingerprint: str, status: SettableStatus) -> None:
+    service = AnalyzerService()
+    connection = _connection(service, name)
+    try:
+        f = service.set_finding_status(connection.id, fingerprint, status)
+    except KeyError as e:
+        console.print(f"[bold red]No Finding {escape(fingerprint)!r} on {name!r}.[/]")
+        raise typer.Exit(1) from e
+    console.print(f"{escape(f.fingerprint)}: {f.status}")
+
+
+def _run_id(known: list[str], prefix: str) -> str:
+    matches = [r for r in known if r.startswith(prefix)]
+    if len(matches) != 1:
+        problem = "No Run" if not matches else "More than one Run"
+        console.print(f"[bold red]{problem} starts with {prefix!r}.[/] See `dbx runs`.")
+        raise typer.Exit(1)
+    return matches[0]
 
 
 @app.command()

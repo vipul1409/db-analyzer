@@ -177,6 +177,10 @@ class Run:
     finished_at: datetime | None
     status: RunStatus
 
+    def in_scope(self, analyzer: AnalyzerName) -> set[str]:
+        """Qualified names of the collections `analyzer` measured in this Run."""
+        return {r.qualified for r in self.scope.get(analyzer, [])}
+
 
 @dataclass(frozen=True)
 class Thread:
@@ -200,6 +204,7 @@ FindingCategory = Literal[
     "config",
 ]
 FindingStatus = Literal["open", "acknowledged", "fixed", "obsolete"]
+SettableStatus = Literal["open", "acknowledged", "fixed"]  # obsolete is set by Runs only
 Severity = Literal["info", "low", "medium", "high"]
 
 
@@ -223,7 +228,9 @@ class Observed:
 
 @dataclass(frozen=True)
 class Finding:
-    """A problem or fact about one subject, with an identity stable across Runs."""
+    """A problem or fact about one subject, with an identity stable across Runs.
+    `unobserved_by` is the latest Run whose scope covered the subject but did not observe the
+    Finding: it asks the engineer "fixed?". It is never answered automatically."""
 
     connection_id: str
     fingerprint: str
@@ -232,6 +239,7 @@ class Finding:
     status: FindingStatus
     first_seen_run: str
     last_seen_run: str
+    unobserved_by: str | None = None
 
 
 @dataclass(frozen=True)

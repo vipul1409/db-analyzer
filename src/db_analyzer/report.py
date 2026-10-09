@@ -1,6 +1,9 @@
-"""Markdown report of one Run."""
+"""Reports of one Run: Markdown to read, JSON to diff and process."""
 
+import dataclasses
+import json
 from datetime import datetime
+from typing import Any
 
 from db_analyzer.analyzers.inventory import schema_rollup
 from db_analyzer.core.model import Connection, Observation, Run, StorageStats
@@ -70,6 +73,60 @@ def markdown(
     if skipped:
         lines += ["", "## Skipped", "", *skipped]
     return "\n".join(lines) + "\n"
+
+
+def json_export(
+    connection: Connection,
+    run: Run,
+    measured: list[StorageStats],
+    observations: list[Observation],
+) -> str:
+    """Collections by name and Findings by fingerprint, keys sorted, one value per line: two
+    exports line up, so a diff shows only what changed. Like the Markdown report, it holds what
+    the Run saw, not Finding statuses, which change after the Run."""
+    doc = {
+        "connection": connection.name,
+        "run": {
+            "id": run.id,
+            "status": run.status,
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+            "scope": {a: sorted(r.qualified for r in refs) for a, refs in run.scope.items()},
+            "skipped": {
+                a: [{"collection": r.qualified, "reason": why} for r, why in items]
+                for a, items in run.skipped.items()
+            },
+        },
+        "collections": [
+            {"collection": s.ref.qualified, **_without_ref(s)}
+            for s in sorted(measured, key=lambda s: s.ref.qualified)
+        ],
+        "findings": [
+            {
+                "fingerprint": o.fingerprint,
+                "severity": o.severity,
+                "title": o.title,
+                "evidence": o.evidence,
+                "recommendation": o.recommendation,
+                "ddl": o.ddl,
+            }
+            for o in sorted(observations, key=lambda o: o.fingerprint)
+        ],
+    }
+    return json.dumps(doc, indent=2, sort_keys=True, default=_json_value) + "\n"
+
+
+def _without_ref(s: StorageStats) -> dict[str, Any]:
+    data = dataclasses.asdict(s)
+    data["kind"] = s.ref.kind.value
+    del data["ref"]
+    return data
+
+
+def _json_value(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
 def _day(at: datetime | None) -> str:

@@ -96,6 +96,7 @@ class FindingRow(Base):
     status: Mapped[str] = mapped_column(String)
     first_seen_run: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     last_seen_run: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    unobserved_by: Mapped[str | None] = mapped_column(String)  # the Run asking "fixed?"
 
 
 class ObservationRow(Base):

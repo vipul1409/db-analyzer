@@ -1,9 +1,11 @@
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
+from db_analyzer.core.model import Connection
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn, seed
 
@@ -32,6 +34,25 @@ def seeded_dsn(major: int, role: str = "db_analyzer") -> str:
 @pytest.fixture
 def service(tmp_path: Path) -> AnalyzerService:
     return AnalyzerService(home=tmp_path)
+
+
+class Shop(NamedTuple):
+    connection: Connection
+    major: int
+
+    @property
+    def id(self) -> str:
+        return self.connection.id
+
+
+@pytest.fixture(params=SUPPORTED)
+def shop(
+    request: pytest.FixtureRequest, service: AnalyzerService, monkeypatch: pytest.MonkeyPatch
+) -> Shop:
+    """A Connection to the seeded 'shop' database, once per supported version."""
+    major = request.param
+    monkeypatch.setenv("DBX_TEST_SHOP_DSN", seeded_dsn(major))
+    return Shop(service.add_connection(f"shop{major}", dsn_env="DBX_TEST_SHOP_DSN"), major)
 
 
 DsnEnv = Callable[[int, str], str]

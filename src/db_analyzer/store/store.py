@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from db_analyzer.core.model import (
     Connection,
     DeadTupleScan,
     Finding,
+    FindingStatus,
     GateLimits,
     LLMRequestLog,
     Maintenance,
@@ -224,10 +226,44 @@ class Store:
                     )
                 )
 
-    def findings(self, connection_id: str) -> list[Finding]:
+    def findings(
+        self, connection_id: str, statuses: Collection[FindingStatus] | None = None
+    ) -> list[Finding]:
+        """The Connection's Findings with one of `statuses`, or all of them."""
         q = select(FindingRow).where(FindingRow.connection_id == connection_id)
+        if statuses is not None:
+            q = q.where(FindingRow.status.in_(statuses))
         with Session(self._engine) as s:
             return [_finding(r) for r in s.scalars(q.order_by(FindingRow.id))]
+
+    def update_findings(self, findings: list[Finding]) -> None:
+        """Save the status and "fixed?" prompt of each Finding, by fingerprint."""
+        with Session(self._engine) as s, s.begin():
+            for f in findings:
+                row = self._finding_row(s, f.connection_id, f.fingerprint)
+                row.status = f.status
+                row.unobserved_by = f.unobserved_by
+
+    def set_finding_status(
+        self, connection_id: str, fingerprint: str, status: FindingStatus
+    ) -> Finding:
+        """The engineer's answer: it settles any "fixed?" prompt."""
+        with Session(self._engine) as s, s.begin():
+            row = self._finding_row(s, connection_id, fingerprint)
+            row.status = status
+            row.unobserved_by = None
+            return _finding(row)
+
+    @staticmethod
+    def _finding_row(s: Session, connection_id: str, fingerprint: str) -> FindingRow:
+        row = s.scalars(
+            select(FindingRow).where(
+                FindingRow.connection_id == connection_id, FindingRow.fingerprint == fingerprint
+            )
+        ).first()
+        if row is None:
+            raise KeyError(f"no Finding {fingerprint!r}")
+        return row
 
     def observations(self, connection_id: str, fingerprint: str) -> list[Observation]:
         return self._observations(
@@ -368,6 +404,7 @@ def _finding(row: FindingRow) -> Finding:
         status=row.status,  # type: ignore[arg-type]
         first_seen_run=row.first_seen_run,
         last_seen_run=row.last_seen_run,
+        unobserved_by=row.unobserved_by,
     )
 
 

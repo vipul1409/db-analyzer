@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -46,6 +46,8 @@ from db_analyzer.agent.llm import (
 )
 from db_analyzer.agent.tools import build_tools
 from db_analyzer.analyzers import inventory
+from db_analyzer.core import lifecycle
+from db_analyzer.core.comparison import RunComparison, compare
 from db_analyzer.core.model import (
     AnalyzerName,
     AuditEntry,
@@ -53,6 +55,7 @@ from db_analyzer.core.model import (
     Connection,
     ConnectionRefused,
     Finding,
+    FindingStatus,
     GateLimits,
     LLMRequestLog,
     Observation,
@@ -61,6 +64,7 @@ from db_analyzer.core.model import (
     QueryRejected,
     Run,
     SessionLimits,
+    SettableStatus,
     StorageStats,
     Thread,
     UnknownCollections,
@@ -70,6 +74,7 @@ from db_analyzer.safety.executor import QueryBudget, Row, SafeExecutor
 from db_analyzer.store.store import Store
 
 SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
+CURRENT_STATUSES: tuple[FindingStatus, ...] = ("open", "acknowledged", "fixed")  # not obsolete
 SqlObserver = Callable[[AuditEntry], None]
 
 
@@ -143,7 +148,8 @@ class AnalyzerService:
         try:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
-                measured = pg_inventory.storage_stats(executor, probe.server_version_num)
+                listed = pg_inventory.storage_stats(executor, probe.server_version_num)
+                measured = listed
                 if collections is not None:
                     measured = inventory.select(measured, list(collections))
                 measured = _measure_table_data(
@@ -156,9 +162,19 @@ class AnalyzerService:
         except BaseException:
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
             raise
-        return self._store.finish_run(
+        # Inventory reads sizes from the catalog, which needs no table privilege and passes the
+        # gate: it skips measurements (ADR 0007), never a whole collection, so is never partial.
+        run = self._store.finish_run(
             run.id, "complete", scope={"inventory": [m.ref for m in measured]}, skipped={}
         )
+        changed = lifecycle.after_run(
+            run,
+            self._store.findings(connection.id),
+            {o.fingerprint for o in found},
+            existing={s.ref.qualified for s in listed},
+        )
+        self._store.update_findings(changed)
+        return run
 
     def run_sql(
         self,
@@ -186,19 +202,53 @@ class AnalyzerService:
         """Collection sizes measured by a Run."""
         return self._store.snapshots(run_id)
 
-    def findings(self, connection_id: str) -> list[Finding]:
-        return self._store.findings(connection_id)
+    def findings(
+        self, connection_id: str, statuses: Collection[FindingStatus] = CURRENT_STATUSES
+    ) -> list[Finding]:
+        """The Connection's Findings with one of `statuses`; obsolete ones only when asked for.
+        A Finding with `unobserved_by` set is asking "fixed?"."""
+        return self._store.findings(connection_id, statuses)
+
+    def set_finding_status(
+        self,
+        connection_id: str,
+        fingerprint: str,
+        status: SettableStatus,
+    ) -> Finding:
+        """Acknowledge a Finding, confirm it fixed, or reopen it. Settles any "fixed?" prompt.
+        Obsolete is set by Runs only, when the subject is gone."""
+        if status not in ("open", "acknowledged", "fixed"):
+            raise ValueError(f"cannot set a Finding to {status!r}")
+        return self._store.set_finding_status(connection_id, fingerprint, status)
 
     def observations(self, connection_id: str, fingerprint: str) -> list[Observation]:
         return self._store.observations(connection_id, fingerprint)
 
-    def export(self, run_id: str, fmt: Literal["md"] = "md") -> bytes:
+    def compare_runs(self, run_a: str, run_b: str) -> RunComparison:
+        """What changed between two Runs of one Connection, oldest first, over the scope both
+        measured only."""
+        a, b = self._store.get_run(run_a), self._store.get_run(run_b)
+        if a.connection_id != b.connection_id:
+            raise ValueError("Runs of different Connections cannot be compared")
+        by_fingerprint = {f.fingerprint: f for f in self._store.findings(a.connection_id)}
+
+        def seen(run: Run) -> list[Finding]:
+            return [by_fingerprint[o.fingerprint] for o in self._store.run_observations(run.id)]
+
+        return compare(
+            a, b, self._store.snapshots(a.id), self._store.snapshots(b.id), seen(a), seen(b)
+        )
+
+    def export(self, run_id: str, fmt: Literal["md", "json"] = "md") -> bytes:
+        """A Run's report: Markdown to read, or JSON laid out so two exports diff line by
+        line."""
         run = self._store.get_run(run_id)
         connection = self._store.get_connection(run.connection_id)
-        text = report.markdown(
-            connection, run, self._store.snapshots(run_id), self._store.run_observations(run_id)
-        )
-        return text.encode()
+        measured = self._store.snapshots(run_id)
+        observations = self._store.run_observations(run_id)
+        if fmt == "json":
+            return report.json_export(connection, run, measured, observations).encode()
+        return report.markdown(connection, run, measured, observations).encode()
 
     def audit(self, connection_id: str, thread_id: str | None = None) -> list[AuditEntry]:
         return self._store.audit(connection_id, thread_id)

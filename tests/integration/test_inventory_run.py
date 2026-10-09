@@ -1,15 +1,15 @@
 import re
-from typing import Any, NamedTuple
+from typing import Any
 
 import psycopg
 import pytest
 
 from db_analyzer.analyzers import inventory
-from db_analyzer.core.model import Connection, GateLimits, StorageStats, UnknownCollections
+from db_analyzer.core.model import GateLimits, StorageStats, UnknownCollections
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn
 
-from .conftest import SUPPORTED, seeded_dsn
+from .conftest import Shop
 
 pytestmark = pytest.mark.integration
 
@@ -30,24 +30,6 @@ INVENTORY_PROBLEMS = {  # ground-truth Findings the inventory analyzer is respon
     for f in GROUND_TRUTH["findings"]
     if f["fingerprint"].split(":")[0] in ("bloat", "stale_stats", "size")
 }
-
-
-class Shop(NamedTuple):
-    connection: Connection
-    major: int
-
-    @property
-    def id(self) -> str:
-        return self.connection.id
-
-
-@pytest.fixture(params=SUPPORTED)
-def shop(
-    request: pytest.FixtureRequest, service: AnalyzerService, monkeypatch: pytest.MonkeyPatch
-) -> Shop:
-    major = request.param
-    monkeypatch.setenv("DBX_TEST_SHOP_DSN", seeded_dsn(major))
-    return Shop(service.add_connection(f"shop{major}", dsn_env="DBX_TEST_SHOP_DSN"), major)
 
 
 def truth(shop: Shop) -> dict[str, dict[str, Any]]:
