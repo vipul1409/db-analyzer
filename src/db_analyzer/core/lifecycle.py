@@ -8,13 +8,18 @@ from dataclasses import replace
 
 from db_analyzer.core.model import AnalyzerName, Finding, FindingCategory, FindingStatus, Run
 
-# Which analyzer evaluates each category, for categories whose subject is one collection.
-# Categories not listed (indexes, queries, entities) are never treated as covered yet: no
-# "fixed?" prompt and no obsolete check until their analyzer says what its scope covers.
-COLLECTION_CATEGORIES: dict[FindingCategory, AnalyzerName] = {
+# Which analyzer evaluates each category whose subject is one relation: a collection, or an
+# index on one. A Run covers such a Finding when that analyzer measured its collection; the
+# Finding is obsolete once the relation is gone. Categories not listed (queries, entities) are
+# never treated as covered yet: no "fixed?" prompt and no obsolete check until their analyzer
+# says what its scope covers.
+RELATION_CATEGORIES: dict[FindingCategory, AnalyzerName] = {
     "size": "inventory",
     "bloat": "inventory",
     "stale_stats": "inventory",
+    "unused_index": "inventory",
+    "duplicate_index": "inventory",
+    "invalid_index": "inventory",
 }
 
 
@@ -27,22 +32,23 @@ def is_ranking_fact(f: Finding) -> bool:
 def evaluated_by(f: Finding) -> AnalyzerName | None:
     """The analyzer whose scope decides whether a Run's silence about `f` means something, or
     None when it never does (ranking facts, categories not mapped yet)."""
-    return None if is_ranking_fact(f) else COLLECTION_CATEGORIES.get(f.category)
+    return None if is_ranking_fact(f) else RELATION_CATEGORIES.get(f.category)
 
 
 def covers(run: Run, f: Finding) -> bool:
-    """Whether `run` measured the subject with the analyzer that evaluates `f`, so not observing
-    `f` means something. Skipped collections are outside the scope, so never covered."""
+    """Whether `run` measured the subject's collection with the analyzer that evaluates `f`, so
+    not observing `f` means something. Skipped collections are outside the scope, so never
+    covered."""
     analyzer = evaluated_by(f)
-    return analyzer is not None and f.subject in run.in_scope(analyzer)
+    return analyzer is not None and f.collection in run.in_scope(analyzer)
 
 
 def after_run(
     run: Run, findings: list[Finding], observed: set[str], existing: set[str] | None
 ) -> list[Finding]:
     """The Findings whose status or "fixed?" prompt `run` changes, updated. `observed` holds the
-    fingerprints the Run observed; `existing` the collections the Connection has now, or None
-    when the Run did not list them."""
+    fingerprints the Run observed; `existing` the relations (collections and indexes, qualified)
+    the Connection has now, or None when the Run did not list them."""
     changed = []
     for f in findings:
         updated = _after(run, f, f.fingerprint in observed, existing)
@@ -55,7 +61,7 @@ def _after(run: Run, f: Finding, observed: bool, existing: set[str] | None) -> F
     if observed:
         status: FindingStatus = "acknowledged" if f.status == "acknowledged" else "open"
         return replace(f, status=status, unobserved_by=None)
-    if existing is not None and f.category in COLLECTION_CATEGORIES and f.subject not in existing:
+    if existing is not None and f.category in RELATION_CATEGORIES and f.subject not in existing:
         return replace(f, status="obsolete", unobserved_by=None)
     if f.status in ("open", "acknowledged") and covers(run, f):
         return replace(f, unobserved_by=run.id)

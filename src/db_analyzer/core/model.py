@@ -105,7 +105,12 @@ class CollectionRef:
     @property
     def qualified(self) -> str:
         """Schema-qualified name, quoted only where Postgres would need it."""
-        return ".".join(_quote(p) for p in (self.namespace, self.name) if p is not None)
+        return qualify(self.namespace, self.name)
+
+
+def qualify(namespace: str | None, name: str) -> str:
+    """Schema-qualified name of any relation, quoted only where Postgres would need it."""
+    return ".".join(_quote(p) for p in (namespace, name) if p is not None)
 
 
 def _quote(identifier: str) -> str:
@@ -157,6 +162,30 @@ class StorageStats:
     maintenance: Maintenance | None = None
     dead_tuple_scan: DeadTupleScan | None = None
     skipped: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class IndexStats:
+    """One index on a collection, from the catalog. `keys` identify each key column precisely
+    (column or expression, operator class, collation, ordering) for comparing indexes and never
+    leave the analyzer; `columns` names the key columns, None for an expression. A partitioned
+    index sums its partitions' sizes and scans."""
+
+    name: str  # schema-qualified
+    table: CollectionRef
+    method: str  # access method: btree, hash, gin, ...
+    keys: list[str]
+    columns: list[str | None]
+    include: list[str]
+    predicate: str | None  # a partial index's WHERE clause
+    index_bytes: int
+    scans: int  # since statistics were last reset
+    unique: bool
+    primary: bool
+    constraint: bool  # backs a constraint (primary key, unique, exclusion)
+    valid: bool
+    partitioned: bool = False  # an index on a partitioned table
+    nulls_not_distinct: bool = False  # a unique index that treats NULLs as equal
 
 
 AnalyzerName = Literal["inventory", "workload", "index_advice", "hotspot"]
@@ -220,6 +249,7 @@ class Observed:
     recommendation: str | None = None
     ddl: str | None = None
     rule: str | None = None  # when one subject can have several Findings of this category
+    collection: str | None = None  # the collection the subject is or belongs to, if any
 
     @property
     def fingerprint(self) -> str:
@@ -240,6 +270,7 @@ class Finding:
     first_seen_run: str
     last_seen_run: str
     unobserved_by: str | None = None
+    collection: str | None = None  # the collection the subject is or belongs to, if any
 
 
 @dataclass(frozen=True)

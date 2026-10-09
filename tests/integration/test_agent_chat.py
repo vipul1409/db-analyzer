@@ -35,6 +35,7 @@ from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH
 
 from .conftest import SUPPORTED, seeded_dsn
+from .test_inventory_run import STORAGE_CATEGORIES
 
 CASSETTES = Path(__file__).parents[1] / "cassettes"
 RECORDED_ON = 17  # cassettes were recorded against this fixture; sizes in answers depend on it
@@ -118,7 +119,12 @@ def test_analyse_storage_delegates_to_the_inventory_analyst_and_ranks_findings(
     assert "get_storage_stats" in [t.name for t in started], "the subagent's tools stream"
     assert of(events, SqlExecuted), "and so does its SQL"
     [run] = of(events, RunFinished)
-    ranked = [o.fingerprint for o in service.run_observations(run.run_id) if o.severity != "info"]
+    # Storage problems only: the cassette's answer was recorded before index health existed.
+    ranked = [
+        o.fingerprint
+        for o in service.run_observations(run.run_id)
+        if o.severity != "info" and o.fingerprint.split(":")[0] in STORAGE_CATEGORIES
+    ]
     assert ranked == [
         "bloat:public.audit_log",
         "stale_stats:public.legacy_imports",

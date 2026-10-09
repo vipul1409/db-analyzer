@@ -125,7 +125,11 @@ def test_comparing_runs_reports_differences_over_shared_scope_only(
     assert "public.events" in c.not_compared["inventory"]
     assert {s.collection for s in c.size_changes} == {SCRATCH, "public.tenants"}
     assert c.size_changes[0].collection == SCRATCH and c.size_changes[0].delta_bytes < 0
-    assert c.disappeared == [INDEX_HEAVY]
+    assert c.disappeared == [  # the dropped indexes' unused Findings go with them
+        INDEX_HEAVY,
+        "unused_index:public.lifecycle_scratch_a",
+        "unused_index:public.lifecycle_scratch_b",
+    ]
     assert BLOAT not in c.disappeared, "audit_log is outside the targeted Run"
 
 

@@ -63,7 +63,8 @@ def compare(
         return {
             f.fingerprint
             for f in seen
-            if (analyzer := evaluated_by(f)) is not None and f.subject in shared.get(analyzer, [])
+            if (analyzer := evaluated_by(f)) is not None
+            and f.collection in shared.get(analyzer, [])
         }
 
     before, after = problems(a_seen), problems(b_seen)

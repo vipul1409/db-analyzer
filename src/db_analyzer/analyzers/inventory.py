@@ -1,5 +1,6 @@
 """Inventory analyzer: store-agnostic findings from measured collection sizes."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -101,13 +102,24 @@ def schema_rollup(measured: list[StorageStats]) -> list[SchemaTotal]:
 SEVERITY_ORDER: dict[Severity, int] = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
 
-def analyze(measured: list[StorageStats], top_n: int = TOP_N, broad: bool = True) -> list[Observed]:
-    """Problems per collection, ranked by severity then table size, followed (for a broad Run
-    only: a targeted one has nothing to rank against) by the largest collections as `size`
-    Findings, which are facts worth reporting rather than problems."""
-    found = [o for s in measured for o in _problems(s)]
-    ranked = sorted(found, key=lambda o: (SEVERITY_ORDER[o.severity], -o.evidence["total_bytes"]))
+def analyze(
+    measured: list[StorageStats],
+    top_n: int = TOP_N,
+    broad: bool = True,
+    other_problems: Sequence[Observed] = (),
+) -> list[Observed]:
+    """Problems per collection, with `other_problems` (this Run's index health, for instance),
+    ranked by severity then by the bytes involved, followed (for a broad Run only: a targeted
+    one has nothing to rank against) by the largest collections as `size` Findings, which are
+    facts worth reporting rather than problems."""
+    found = [o for s in measured for o in _problems(s)] + list(other_problems)
+    ranked = sorted(found, key=lambda o: (SEVERITY_ORDER[o.severity], -_bytes(o)))
     return ranked + (_largest(measured, top_n) if broad else [])
+
+
+def _bytes(o: Observed) -> int:
+    """What a problem weighs: its collection's total size, or its index's size."""
+    return int(o.evidence.get("total_bytes", o.evidence.get("index_bytes", 0)))
 
 
 def _largest(measured: list[StorageStats], top_n: int) -> list[Observed]:
@@ -117,6 +129,7 @@ def _largest(measured: list[StorageStats], top_n: int) -> list[Observed]:
         Observed(
             category="size",
             subject=s.ref.qualified,
+            collection=s.ref.qualified,
             severity="info",
             title=f"{s.ref.qualified} is #{rank} by size: {format_bytes(s.total_bytes)}",
             evidence={
@@ -174,6 +187,7 @@ def _bloat(s: StorageStats) -> Observed | None:
     return Observed(
         category="bloat",
         subject=s.ref.qualified,
+        collection=s.ref.qualified,
         severity=severity,
         title=title,
         evidence={
@@ -217,6 +231,7 @@ def _stale_stats(s: StorageStats) -> Observed | None:
     return Observed(
         category="stale_stats",
         subject=s.ref.qualified,
+        collection=s.ref.qualified,
         severity="medium" if estimate_off else "low",
         title=title,
         evidence={
@@ -244,6 +259,7 @@ def _index_heavy(s: StorageStats) -> Observed | None:
     return Observed(
         category="size",
         subject=s.ref.qualified,
+        collection=s.ref.qualified,
         rule="index_heavy",
         severity="low",
         title=(
@@ -270,6 +286,7 @@ def _toast_oversized(s: StorageStats) -> Observed | None:
     return Observed(
         category="size",
         subject=s.ref.qualified,
+        collection=s.ref.qualified,
         rule="toast_oversized",
         severity="low",
         title=(

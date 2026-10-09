@@ -37,6 +37,7 @@ def finding(
     fingerprint: str = "bloat:public.events",
     status: FindingStatus = "open",
     unobserved_by: str | None = None,
+    collection: str | None = None,
 ) -> Finding:
     category, subject = fingerprint.split(":")[:2]
     return Finding(
@@ -48,6 +49,7 @@ def finding(
         first_seen_run="r1",
         last_seen_run="r1",
         unobserved_by=unobserved_by,
+        collection=collection or subject,
     )
 
 
@@ -124,3 +126,22 @@ def test_only_changed_findings_are_returned() -> None:
 
 def test_a_run_that_did_not_list_collections_marks_nothing_obsolete() -> None:
     assert after(run([TENANTS]), finding(), existing=None).status == "open"
+
+
+UNUSED = "unused_index:public.idx_events_kind"
+
+
+def test_an_index_finding_is_covered_when_its_table_is_in_scope() -> None:
+    f = finding(UNUSED, collection="public.events")
+    existing = EVERYTHING | {"public.idx_events_kind"}
+
+    assert after(run([EVENTS]), f, existing=existing).unobserved_by == "r2"
+    assert after(run([TENANTS]), f, existing=existing).unobserved_by is None
+
+
+def test_a_dropped_index_makes_its_finding_obsolete_while_its_table_remains() -> None:
+    f = finding(UNUSED, collection="public.events")
+
+    assert after(run([EVENTS]), f, existing=EVERYTHING).status == "obsolete"
+    kept = after(run([EVENTS]), f, observed=True, existing=EVERYTHING | {"public.idx_events_kind"})
+    assert kept.status == "open"

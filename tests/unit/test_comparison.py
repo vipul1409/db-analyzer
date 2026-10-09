@@ -31,7 +31,7 @@ def stats(name: str, total: int) -> StorageStats:
 
 def seen(fingerprint: str) -> Finding:
     category, subject = fingerprint.split(":")[:2]
-    return Finding("c", fingerprint, category, subject, "open", "r1", "r1")  # type: ignore[arg-type]
+    return Finding("c", fingerprint, category, subject, "open", "r1", "r1", collection=subject)  # type: ignore[arg-type]
 
 
 def test_size_changes_cover_only_collections_both_runs_measured() -> None:

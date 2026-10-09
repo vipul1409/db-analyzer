@@ -45,7 +45,7 @@ from db_analyzer.agent.llm import (
     make_model,
 )
 from db_analyzer.agent.tools import build_tools
-from db_analyzer.analyzers import inventory
+from db_analyzer.analyzers import index_health, inventory
 from db_analyzer.core import lifecycle
 from db_analyzer.core.comparison import RunComparison, compare
 from db_analyzer.core.model import (
@@ -149,6 +149,7 @@ class AnalyzerService:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
                 listed = pg_inventory.storage_stats(executor, probe.server_version_num)
+                indexes = pg_inventory.index_stats(executor, probe.server_version_num)
                 measured = listed
                 if collections is not None:
                     measured = inventory.select(measured, list(collections))
@@ -157,7 +158,16 @@ class AnalyzerService:
                 )
             self._store.save_probe(connection.id, probe)
             self._store.save_snapshots(run.id, measured)
-            found = inventory.analyze(measured, broad=collections is None)
+            measured_refs = {m.ref for m in measured}
+            index_problems = index_health.analyze(
+                [i for i in indexes if i.table in measured_refs],
+                stats_reset=probe.stats.database_stats_reset,
+                now=probe.taken_at,
+                on_replica=probe.in_recovery,
+            )
+            found = inventory.analyze(
+                measured, broad=collections is None, other_problems=index_problems
+            )
             self._store.record_observations(connection.id, run.id, found)
         except BaseException:
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
@@ -171,7 +181,7 @@ class AnalyzerService:
             run,
             self._store.findings(connection.id),
             {o.fingerprint for o in found},
-            existing={s.ref.qualified for s in listed},
+            existing={s.ref.qualified for s in listed} | {i.name for i in indexes},
         )
         self._store.update_findings(changed)
         return run

@@ -7,8 +7,10 @@ from db_analyzer.core.model import (
     CollectionKind,
     CollectionRef,
     DeadTupleScan,
+    IndexStats,
     Maintenance,
     StorageStats,
+    qualify,
 )
 from db_analyzer.safety.executor import SafeExecutor
 
@@ -41,6 +43,32 @@ def storage_stats(executor: SafeExecutor, server_version_num: int) -> list[Stora
             ),
         )
         for r in run_template(executor, template, purpose="inventory")
+    ]
+
+
+def index_stats(executor: SafeExecutor, server_version_num: int) -> list[IndexStats]:
+    template = LIBRARY.get("index_stats", server_version_num)
+    return [
+        IndexStats(
+            name=qualify(str(r["schema"]), str(r["name"])),
+            table=CollectionRef(
+                str(r["table_schema"]), str(r["table_name"]), CollectionKind(r["table_kind"])
+            ),
+            method=str(r["method"]),
+            keys=list(r["keys"]),
+            columns=list(r["columns"]),
+            include=list(r["include"]),
+            predicate=r["predicate"],
+            index_bytes=int(r["index_bytes"]),
+            scans=int(r["scans"]),
+            unique=bool(r["is_unique"]),
+            primary=bool(r["is_primary"]),
+            constraint=bool(r["backs_constraint"]),
+            valid=bool(r["is_valid"]),
+            partitioned=bool(r["is_partitioned"]),
+            nulls_not_distinct=bool(r["nulls_not_distinct"]),
+        )
+        for r in run_template(executor, template, purpose="index health")
     ]
 
 

@@ -25,10 +25,11 @@ SHOP_TABLES = {
     "reference.sku_categories",
 }
 STALE = "public.legacy_imports"  # ground truth: statistics deliberately out of date
-INVENTORY_PROBLEMS = {  # ground-truth Findings the inventory analyzer is responsible for
+STORAGE_CATEGORIES = ("bloat", "stale_stats", "size")  # index health: test_index_health.py
+INVENTORY_PROBLEMS = {  # ground-truth storage Findings the inventory analyzer is responsible for
     f["fingerprint"]: f
     for f in GROUND_TRUTH["findings"]
-    if f["fingerprint"].split(":")[0] in ("bloat", "stale_stats", "size")
+    if f["fingerprint"].split(":")[0] in STORAGE_CATEGORIES
 }
 
 
@@ -216,7 +217,11 @@ def test_seeded_problems_become_exactly_the_expected_findings(
 ) -> None:
     run = service.run(shop.id, analyzers=["inventory"])
 
-    problems = {o.fingerprint: o for o in service.run_observations(run.id) if o.severity != "info"}
+    problems = {
+        o.fingerprint: o
+        for o in service.run_observations(run.id)
+        if o.severity != "info" and o.fingerprint.split(":")[0] in STORAGE_CATEGORIES
+    }
 
     assert set(problems) == set(INVENTORY_PROBLEMS)
     bloat = problems["bloat:public.audit_log"]

@@ -208,6 +208,7 @@ class Store:
                         fingerprint=o.fingerprint,
                         category=o.category,
                         subject=o.subject,
+                        collection=o.collection,
                         status="open",
                         first_seen_run=run_id,
                     )
@@ -405,6 +406,7 @@ def _finding(row: FindingRow) -> Finding:
         first_seen_run=row.first_seen_run,
         last_seen_run=row.last_seen_run,
         unobserved_by=row.unobserved_by,
+        collection=row.collection,
     )
 
 
