@@ -73,7 +73,7 @@ class RunRow(Base):
 
 
 class SnapshotRow(Base):
-    """Measured data per Run (StorageStats now, WorkloadItems later) for trend comparison."""
+    """Measured data per Run (StorageStats, a WorkloadReport) for trend comparison."""
 
     __tablename__ = "snapshots"
 

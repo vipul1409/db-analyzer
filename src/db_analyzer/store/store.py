@@ -33,6 +33,8 @@ from db_analyzer.core.model import (
     SessionLimits,
     StorageStats,
     Thread,
+    WorkloadItem,
+    WorkloadReport,
 )
 from db_analyzer.store.models import (
     AliasRow,
@@ -47,7 +49,8 @@ from db_analyzer.store.models import (
     ThreadRow,
 )
 
-_STORAGE_STATS = "storage_stats"  # snapshots.kind for StorageStats; WorkloadItems come later
+_STORAGE_STATS = "storage_stats"  # snapshots.kind for StorageStats
+_WORKLOAD = "workload"  # snapshots.kind for a Run's WorkloadReport: one row per Run
 
 Scope = dict[AnalyzerName, list[CollectionRef]]
 Skipped = dict[AnalyzerName, list[tuple[CollectionRef, str]]]
@@ -189,6 +192,24 @@ class Store:
                 _storage_stats(json.loads(r.data_json))
                 for r in s.scalars(q.order_by(SnapshotRow.id))
             ]
+
+    def save_workload(self, run_id: str, report: WorkloadReport) -> None:
+        with Session(self._engine) as s, s.begin():
+            s.add(
+                SnapshotRow(
+                    run_id=run_id,
+                    kind=_WORKLOAD,
+                    subject=report.source or "none",
+                    data_json=json.dumps(dataclasses.asdict(report), default=_iso),
+                )
+            )
+
+    def workload(self, run_id: str) -> WorkloadReport | None:
+        """What the Run's workload part found, or None if it had none."""
+        q = select(SnapshotRow).where(SnapshotRow.run_id == run_id, SnapshotRow.kind == _WORKLOAD)
+        with Session(self._engine) as s:
+            row = s.scalars(q).first()
+            return None if row is None else _workload(json.loads(row.data_json))
 
     def record_observations(
         self, connection_id: str, run_id: str, observed: list[Observed]
@@ -388,6 +409,17 @@ def _maintenance(data: dict[str, Any]) -> Maintenance:
 
 
 _MAINTENANCE_TIMES = ("last_vacuum", "last_analyze")
+
+
+def _workload(data: dict[str, Any]) -> WorkloadReport:
+    reset = data["stats_reset"]
+    return WorkloadReport(
+        **{
+            **data,
+            "stats_reset": None if reset is None else datetime.fromisoformat(reset),
+            "items": [WorkloadItem(**i) for i in data["items"]],
+        }
+    )
 
 
 def _iso(value: object) -> str:

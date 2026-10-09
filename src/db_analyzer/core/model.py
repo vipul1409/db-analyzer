@@ -188,6 +188,77 @@ class IndexStats:
     nulls_not_distinct: bool = False  # a unique index that treats NULLs as equal
 
 
+WorkloadSource = Literal["pg_stat_statements"]
+
+
+@dataclass(frozen=True)
+class WorkloadStatement:
+    """One row of a workload source: a normalized statement and what it cost, summed over every
+    user and server-side id it ran under."""
+
+    text: str  # normalized: placeholders ($1) in place of values
+    calls: int
+    total_ms: float
+    rows: int
+    shared_blks_read: int
+    temp_blks_written: int
+
+
+@dataclass(frozen=True)
+class WorkloadItem:
+    """One distinct statement of the workload, ranked. `fingerprint` is a hash of the
+    normalized text, never the server's query id, so it holds across versions."""
+
+    fingerprint: str
+    text: str
+    calls: int
+    total_ms: float
+    mean_ms: float
+    rows: int
+    shared_blks_read: int
+    temp_blks_written: int
+    share_of_time: float  # of all the statements the source reported
+    ranked_by: list[str]  # which of the four rankings it is in the top N of
+
+
+@dataclass(frozen=True)
+class WorkloadReport:
+    """What the workload part of a Run found. `items` is empty and `refused` says why when the
+    statistics cannot be ranked; `source` is None when the Connection has none."""
+
+    source: WorkloadSource | None
+    stats_reset: datetime | None
+    window_seconds: float | None  # how long the source has been collecting
+    items: list[WorkloadItem]
+    statements: int  # distinct statements the source reported, after exclusions
+    total_ms: float  # of those
+    excluded: dict[str, int]  # reason -> rows left out of the ranking
+    warnings: list[str]
+    refused: str | None = None
+    enable_steps: list[str] = field(default_factory=list)  # when there is no source
+
+
+@dataclass(frozen=True)
+class UnindexedForeignKey:
+    """A foreign key whose columns no index starts with: deleting or updating a referenced row
+    scans the whole table."""
+
+    table: CollectionRef
+    constraint: str
+    columns: list[str]
+
+
+@dataclass(frozen=True)
+class ScanActivity:
+    """How a table has been read since statistics were reset."""
+
+    table: CollectionRef
+    seq_scans: int
+    seq_rows_read: int
+    idx_scans: int
+    live_rows: int
+
+
 AnalyzerName = Literal["inventory", "workload", "index_advice", "hotspot"]
 RunStatus = Literal["running", "complete", "partial", "failed"]
 

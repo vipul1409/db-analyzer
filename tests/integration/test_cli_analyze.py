@@ -123,3 +123,56 @@ def test_compare_shows_what_changed_over_shared_scope(
         "not compared" in result.output
         and "public.events" not in result.output.split("not compared")[0]
     )
+
+
+def test_analyze_ranks_the_workload_on_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBX_HOME", str(tmp_path))
+    monkeypatch.setenv("DBX_DSN", seeded_dsn(SUPPORTED[-1]))
+    runner = CliRunner()
+    assert runner.invoke(app, ["connect", "shop"]).exit_code == 0
+
+    result = runner.invoke(
+        app,
+        ["analyze", "shop", "-a", "workload", "--min-stats-window", "0"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Most expensive" in result.output
+    assert "slow_query:" in result.output
+    assert "Largest of" not in result.output
+
+
+def test_analyze_refuses_to_rank_young_statistics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBX_HOME", str(tmp_path))
+    monkeypatch.setenv("DBX_DSN", seeded_dsn(SUPPORTED[-1]))
+    runner = CliRunner()
+    assert runner.invoke(app, ["connect", "shop"]).exit_code == 0
+
+    result = runner.invoke(
+        app,
+        ["analyze", "shop", "-a", "workload", "--min-stats-window", "87600"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Warning:" in result.output and "minimum window" in result.output
+    assert "Most expensive" not in result.output
+
+
+def test_analyze_rejects_an_unknown_analyzer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBX_HOME", str(tmp_path))
+    monkeypatch.setenv("DBX_DSN", seeded_dsn(SUPPORTED[-1]))
+    runner = CliRunner()
+    assert runner.invoke(app, ["connect", "shop"]).exit_code == 0
+
+    result = runner.invoke(app, ["analyze", "shop", "-a", "hotspot"])
+
+    assert result.exit_code == 1
+    assert "Unknown analyzer" in result.output

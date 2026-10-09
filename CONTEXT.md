@@ -30,6 +30,10 @@ _Avoid_: Failed table, excluded table
 One measurement a Run planned for a collection it did measure, but did not take (an exact count the EXPLAIN gate refused, a dead-tuple scan over the scan limit), recorded with the reason. The collection stays in scope with what was measured, such as an estimated row count, and the Run is not partial.
 _Avoid_: Skipped collection (the collection was measured), failed count
 
+**Workload source**:
+Where a Connection's record of executed statements comes from (`pg_stat_statements`, later Azure Query Store). The workload analyzer ranks its statements; a source's statistics cover only the time since it was last reset, its **stats window**, and are not ranked when that is too short.
+_Avoid_: Query log, slow log
+
 **Thread**:
 A conversation with the agent, bound to one Connection for its whole life.
 _Avoid_: Session, chat (as the stored record)

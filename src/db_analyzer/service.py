@@ -4,7 +4,8 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from db_analyzer import report
 from db_analyzer.adapters import postgres as pg
 from db_analyzer.adapters.postgres import inventory as pg_inventory
 from db_analyzer.adapters.postgres import probe as pg_probe
+from db_analyzer.adapters.postgres import workload as pg_workload
 from db_analyzer.adapters.postgres.queries import LIBRARY
 from db_analyzer.adapters.postgres.session import open_session
 from db_analyzer.adapters.sql_common.templates import run_template
@@ -45,20 +47,23 @@ from db_analyzer.agent.llm import (
     make_model,
 )
 from db_analyzer.agent.tools import build_tools
-from db_analyzer.analyzers import index_health, inventory
+from db_analyzer.analyzers import index_health, inventory, workload
 from db_analyzer.core import lifecycle
 from db_analyzer.core.comparison import RunComparison, compare
 from db_analyzer.core.model import (
     AnalyzerName,
     AuditEntry,
     Capability,
+    CollectionRef,
     Connection,
     ConnectionRefused,
     Finding,
     FindingStatus,
     GateLimits,
+    IndexStats,
     LLMRequestLog,
     Observation,
+    Observed,
     ProbeResult,
     QueryCapReached,
     QueryRejected,
@@ -68,12 +73,14 @@ from db_analyzer.core.model import (
     StorageStats,
     Thread,
     UnknownCollections,
+    WorkloadReport,
 )
 from db_analyzer.safety.aliases import Aliases, assign
 from db_analyzer.safety.executor import QueryBudget, Row, SafeExecutor
 from db_analyzer.store.store import Store
 
-SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
+SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory", "workload")
+DEFAULT_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
 CURRENT_STATUSES: tuple[FindingStatus, ...] = ("open", "acknowledged", "fixed")  # not obsolete
 SqlObserver = Callable[[AuditEntry], None]
 
@@ -127,61 +134,94 @@ class AnalyzerService:
     def run(
         self,
         connection_id: str,
-        analyzers: Sequence[AnalyzerName] = SUPPORTED_ANALYZERS,
+        analyzers: Sequence[AnalyzerName] = DEFAULT_ANALYZERS,
         thread_id: str | None = None,
         budget: QueryBudget | None = None,
         on_sql: SqlObserver | None = None,
         *,
         collections: Sequence[str] | None = None,
         exact_counts: bool = False,
+        min_stats_window: timedelta = workload.MIN_STATS_WINDOW,
     ) -> Run:
         """A deterministic Run, no LLM: probe, measure, record Findings and Observations.
 
-        `collections` targets the Run at those tables (schema-qualified, or bare when
-        unambiguous); None measures every one. `exact_counts` also counts their rows with
-        count(*), each only where the EXPLAIN gate allows: a refused count is recorded on the
-        collection with its reason, and the collection keeps its estimate."""
+        `inventory` measures sizes and index health. `collections` targets it at those tables
+        (schema-qualified, or bare when unambiguous); None measures every one. `exact_counts`
+        also counts their rows with count(*), each only where the EXPLAIN gate allows: a refused
+        count is recorded on the collection with its reason, and the collection keeps its
+        estimate.
+
+        `workload` ranks the most expensive statements from pg_stat_statements, and refuses to
+        when its statistics are younger than `min_stats_window`. With no workload source it
+        reviews the schema instead (ADR 0010). Either way the Run is partial when no ranking
+        was made."""
         if unsupported := set(analyzers) - set(SUPPORTED_ANALYZERS):
             raise ValueError(f"analyzers not available yet: {sorted(unsupported)}")
+        if (collections is not None or exact_counts) and "inventory" not in analyzers:
+            raise ValueError("collections and exact_counts apply to the inventory analyzer")
         connection = self._store.get_connection(connection_id)
         run = self._store.start_run(connection.id, thread_id)
+        found: list[Observed] = []
+        scope: dict[AnalyzerName, list[CollectionRef]] = {}
+        listed: list[StorageStats] | None = None
+        indexes: list[IndexStats] = []
+        workload_report: WorkloadReport | None = None
         try:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
-                listed = pg_inventory.storage_stats(executor, probe.server_version_num)
-                indexes = pg_inventory.index_stats(executor, probe.server_version_num)
-                measured = listed
-                if collections is not None:
-                    measured = inventory.select(measured, list(collections))
-                measured = _measure_table_data(
-                    executor, probe, connection.gate, measured, exact_counts
-                )
+                if "inventory" in analyzers:
+                    listed = pg_inventory.storage_stats(executor, probe.server_version_num)
+                    indexes = pg_inventory.index_stats(executor, probe.server_version_num)
+                    measured = listed
+                    if collections is not None:
+                        measured = inventory.select(measured, list(collections))
+                    measured = _measure_table_data(
+                        executor, probe, connection.gate, measured, exact_counts
+                    )
+                if "workload" in analyzers:
+                    review = _workload(executor, probe, min_stats_window)
             self._store.save_probe(connection.id, probe)
-            self._store.save_snapshots(run.id, measured)
-            measured_refs = {m.ref for m in measured}
-            index_problems = index_health.analyze(
-                [i for i in indexes if i.table in measured_refs],
-                stats_reset=probe.stats.database_stats_reset,
-                now=probe.taken_at,
-                on_replica=probe.in_recovery,
-            )
-            found = inventory.analyze(
-                measured, broad=collections is None, other_problems=index_problems
-            )
+            if listed is not None:
+                self._store.save_snapshots(run.id, measured)
+                measured_refs = {m.ref for m in measured}
+                index_problems = index_health.analyze(
+                    [i for i in indexes if i.table in measured_refs],
+                    stats_reset=probe.stats.database_stats_reset,
+                    now=probe.taken_at,
+                    on_replica=probe.in_recovery,
+                )
+                found = inventory.analyze(
+                    measured, broad=collections is None, other_problems=index_problems
+                )
+                # Inventory reads sizes from the catalog, which needs no table privilege and
+                # passes the gate: it skips measurements (ADR 0007), never a whole collection.
+                scope["inventory"] = [m.ref for m in measured]
+            if "workload" in analyzers:
+                workload_report = review.report
+                self._store.save_workload(run.id, workload_report)
+                found += review.found
+                if review.scope is not None:
+                    scope["workload"] = review.scope
             self._store.record_observations(connection.id, run.id, found)
         except BaseException:
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
             raise
-        # Inventory reads sizes from the catalog, which needs no table privilege and passes the
-        # gate: it skips measurements (ADR 0007), never a whole collection, so is never partial.
+        # A workload that was refused, or reviewed from the schema alone, was not ranked.
+        ranked = workload_report is None or (
+            workload_report.source is not None and workload_report.refused is None
+        )
         run = self._store.finish_run(
-            run.id, "complete", scope={"inventory": [m.ref for m in measured]}, skipped={}
+            run.id, "complete" if ranked else "partial", scope=scope, skipped={}
         )
         changed = lifecycle.after_run(
             run,
             self._store.findings(connection.id),
             {o.fingerprint for o in found},
-            existing={s.ref.qualified for s in listed} | {i.name for i in indexes},
+            existing=(
+                None
+                if listed is None
+                else {s.ref.qualified for s in listed} | {i.name for i in indexes}
+            ),
         )
         self._store.update_findings(changed)
         return run
@@ -211,6 +251,11 @@ class AnalyzerService:
     def storage(self, run_id: str) -> list[StorageStats]:
         """Collection sizes measured by a Run."""
         return self._store.snapshots(run_id)
+
+    def workload(self, run_id: str) -> WorkloadReport | None:
+        """What a Run's workload analyzer found: the ranked statements, how long the statistics
+        cover, why nothing was ranked if so. None if the Run did not include it."""
+        return self._store.workload(run_id)
 
     def findings(
         self, connection_id: str, statuses: Collection[FindingStatus] = CURRENT_STATUSES
@@ -256,9 +301,10 @@ class AnalyzerService:
         connection = self._store.get_connection(run.connection_id)
         measured = self._store.snapshots(run_id)
         observations = self._store.run_observations(run_id)
+        statements = self._store.workload(run_id)
         if fmt == "json":
-            return report.json_export(connection, run, measured, observations).encode()
-        return report.markdown(connection, run, measured, observations).encode()
+            return report.json_export(connection, run, measured, observations, statements).encode()
+        return report.markdown(connection, run, measured, observations, statements).encode()
 
     def audit(self, connection_id: str, thread_id: str | None = None) -> list[AuditEntry]:
         return self._store.audit(connection_id, thread_id)
@@ -396,6 +442,44 @@ class AnalyzerService:
         with open_session(dsn, connection.limits) as conn:
             # No column is a confirmed entity key until entity maps exist.
             yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
+
+
+@dataclass(frozen=True)
+class _WorkloadReview:
+    """The workload part of a Run: its report, its Findings, and the collections it measured
+    (None when it measured none: the statistics were refused, or no source was reviewed)."""
+
+    report: WorkloadReport
+    found: list[Observed]
+    scope: list[CollectionRef] | None
+
+
+def _workload(
+    executor: SafeExecutor, probe: ProbeResult, min_stats_window: timedelta
+) -> _WorkloadReview:
+    """Rank the workload source's statements. With no source, review the schema instead and say
+    how to enable one; with statistics too young, rank nothing."""
+    if (source := pg_workload.source(probe)) is None:
+        installed = "pg_stat_statements" in probe.extensions
+        preloaded = "pg_stat_statements" in (probe.settings.get("shared_preload_libraries") or "")
+        steps = workload.enable_steps(installed, preloaded, probe.host_type == "azure_flexible")
+        foreign_keys = pg_workload.unindexed_foreign_keys(executor, probe.server_version_num)
+        scans = pg_workload.scan_activity(executor, probe.server_version_num)
+        return _WorkloadReview(
+            workload.no_source(steps),
+            workload.schema_only_review(foreign_keys, scans),
+            [s.table for s in scans],
+        )
+    report = workload.report(
+        pg_workload.statements(executor, probe),
+        source=source,
+        stats_reset=probe.stats.statements_stats_reset,
+        now=probe.taken_at,
+        on_replica=probe.in_recovery,
+        min_window=min_stats_window,
+    )
+    # Statements name no collections, so a ranked workload has an empty list of them.
+    return _WorkloadReview(report, workload.analyze(report), None if report.refused else [])
 
 
 def _measure_table_data(

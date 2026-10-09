@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -15,6 +15,7 @@ from rich.table import Table
 
 from db_analyzer.agent.events import AgentEvent
 from db_analyzer.agent.llm import LLMConfigError
+from db_analyzer.analyzers.workload import MIN_STATS_WINDOW
 from db_analyzer.core.model import (
     Connection,
     ConnectionRefused,
@@ -23,14 +24,22 @@ from db_analyzer.core.model import (
     QueryRejected,
     Run,
     SettableStatus,
+    StorageStats,
     UnknownCollections,
+    WorkloadReport,
 )
 from db_analyzer.core.units import format_bytes
-from db_analyzer.service import CURRENT_STATUSES, AnalyzerService
+from db_analyzer.service import (
+    CURRENT_STATUSES,
+    DEFAULT_ANALYZERS,
+    SUPPORTED_ANALYZERS,
+    AnalyzerService,
+)
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
+MIN_STATS_WINDOW_HOURS = MIN_STATS_WINDOW.total_seconds() / 3600
 WANTED_EXTENSIONS = ("pg_stat_statements", "hypopg", "pgstattuple", "pg_buffercache")
 
 
@@ -86,14 +95,44 @@ def analyze(
             "the others keep their estimate and show why."
         ),
     ] = False,
+    analyzer: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--analyzer",
+            "-a",
+            help="What to analyse: inventory (sizes, index health) or workload (the most "
+            "expensive statements, from pg_stat_statements). Repeat for both. Default: inventory.",
+        ),
+    ] = None,
+    min_stats_window: Annotated[
+        float,
+        typer.Option(
+            help="Hours the statement statistics must cover before the workload is ranked; "
+            "younger statistics are refused."
+        ),
+    ] = MIN_STATS_WINDOW_HOURS,
 ) -> None:
-    """Run the deterministic inventory analysis (no LLM): tables by size and ranked Findings."""
+    """Run the deterministic analysis (no LLM): tables by size and ranked Findings; with
+    `-a workload`, the most expensive statements."""
     service = AnalyzerService()
     connection = _connection(service, name)
+    chosen = analyzer or list(DEFAULT_ANALYZERS)
+    if unknown := sorted(set(chosen) - set(SUPPORTED_ANALYZERS)):
+        console.print(
+            f"[bold red]Unknown analyzer {unknown[0]!r}.[/] Choose from: inventory, workload"
+        )
+        raise typer.Exit(1)
+    if (table or exact_counts) and "inventory" not in chosen:
+        console.print("[bold red]--table and --exact-counts apply to the inventory analyzer.[/]")
+        raise typer.Exit(1)
     with _database_errors("Analysis failed"):
         try:
             run = service.run(
-                connection.id, ["inventory"], collections=table or None, exact_counts=exact_counts
+                connection.id,
+                [a for a in SUPPORTED_ANALYZERS if a in chosen],
+                collections=table or None,
+                exact_counts=exact_counts,
+                min_stats_window=timedelta(hours=min_stats_window),
             )
         except UnknownCollections as e:
             console.print(f"[bold red]{e}[/]")
@@ -365,6 +404,52 @@ def _database_errors(failed: str) -> Iterator[None]:
 
 def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
     measured = sorted(service.storage(run.id), key=lambda s: -s.total_bytes)
+    if "inventory" in run.scope:
+        _render_sizes(run, measured, top)
+    else:
+        console.print(f"Run {run.id[:8]}, {run.status}")
+    if (statements := service.workload(run.id)) is not None:
+        _render_workload(statements)
+    problems = [o for o in service.run_observations(run.id) if o.severity != "info"]
+    for rank, o in enumerate(problems, start=1):
+        console.print(f"{rank}. [bold]{o.severity}[/] {escape(o.fingerprint)}: {escape(o.title)}")
+    for s in measured:
+        for what, why in s.skipped.items():
+            console.print(f"[yellow]{s.ref.qualified}: {what.replace('_', ' ')} skipped:[/] {why}")
+
+
+def _render_workload(w: WorkloadReport) -> None:
+    for warning in w.warnings:
+        console.print(f"[yellow]Warning:[/] {escape(warning)}")
+    if w.source is None:
+        console.print("[bold]To rank slow statements, enable pg_stat_statements:[/]")
+        for n, step in enumerate(w.enable_steps, start=1):
+            console.print(f"  {n}. {escape(step)}")
+        console.print("[dim]Reviewing the schema instead.[/]")
+        return
+    for why, n in sorted(w.excluded.items()):
+        console.print(f"[dim]Left out of the ranking: {n} with {why}[/]")
+    if not w.items:
+        return
+    table = Table(title=f"Most expensive of {w.statements:,} statements ({w.source})")
+    for column in ("#", "Fingerprint", "Calls", "Total", "Mean", "Share", "Statement"):
+        table.add_column(
+            column, justify="left" if column in ("Fingerprint", "Statement") else "right"
+        )
+    for rank, i in enumerate(w.items[:10], start=1):
+        table.add_row(
+            str(rank),
+            i.fingerprint,
+            f"{i.calls:,}",
+            f"{i.total_ms / 1000:,.1f} s",
+            f"{i.mean_ms:,.1f} ms",
+            f"{i.share_of_time:.0%}",
+            escape(i.text if len(i.text) <= 70 else i.text[:69] + "…"),
+        )
+    console.print(table)
+
+
+def _render_sizes(run: Run, measured: list[StorageStats], top: int) -> None:
     table = Table(title=f"Largest of {len(measured)} tables (Run {run.id[:8]}, {run.status})")
     for column in ("#", "Table", "Total", "Heap", "Indexes", "TOAST", "Rows"):
         table.add_column(column, justify="left" if column == "Table" else "right")
@@ -379,12 +464,6 @@ def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
             "unknown" if s.row_count is None else f"{s.row_count:,} ({s.row_count_method})",
         )
     console.print(table)
-    problems = [o for o in service.run_observations(run.id) if o.severity != "info"]
-    for rank, o in enumerate(problems, start=1):
-        console.print(f"{rank}. [bold]{o.severity}[/] {escape(o.fingerprint)}: {escape(o.title)}")
-    for s in measured:
-        for what, why in s.skipped.items():
-            console.print(f"[yellow]{s.ref.qualified}: {what.replace('_', ' ')} skipped:[/] {why}")
 
 
 def _render_probe(name: str, p: ProbeResult) -> None:
