@@ -8,7 +8,18 @@ Create the read-only login with `docs/setup/postgres_role.sql` (Azure notes in `
 
 ```sh
 export DBX_DSN='postgresql://db_analyzer:<secret>@host:5432/app'
-uv run dbx connect prod     # probe the database and show what the analyzer can see
+uv run dbx connect prod                     # probe the database and show what the analyzer can see
+uv run dbx analyze prod --report out.md     # inventory Run (no LLM): tables by size, estimated rows
+```
+
+Each `analyze` is recorded as a Run, with its Findings, in the local store. A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement first passes the EXPLAIN gate (cost and row limits) and is written to the audit log.
+
+To try it on the synthetic dataset (see Development):
+
+```sh
+make db-up PG=pg17 && make db-seed PG=17
+export DBX_DSN=postgresql://db_analyzer:db_analyzer@localhost:5417/shop
+uv run dbx connect shop && uv run dbx analyze shop --report out.md
 ```
 
 Secrets come from the environment. Copy `.env.example` to `.env` (git-ignored), fill in `OPENAI_API_KEY`, and load it with `uv run --env-file .env …`.

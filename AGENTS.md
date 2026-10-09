@@ -13,3 +13,7 @@ Default labels: needs-triage, needs-info, ready-for-agent, ready-for-human, wont
 ### Domain docs
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Docs
+
+After implementing a ticket, run the `update-docs` skill before committing, so docs land in the same commit as the code.
