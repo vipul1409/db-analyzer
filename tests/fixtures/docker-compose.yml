@@ -1,5 +1,9 @@
 # Postgres fixtures for integration tests. Host port = 5400 + major version.
+# pg14 exists only to test that unsupported versions are refused.
 x-pg: &pg
+  volumes:
+    - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    - ../../docs/setup:/setup:ro
   environment:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
@@ -13,12 +17,17 @@ x-pg: &pg
     - -c
     - track_io_timing=on
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d app"]
     interval: 2s
     timeout: 3s
     retries: 30
 
 services:
+  pg14:
+    <<: *pg
+    build: { context: ./postgres, args: { PG_MAJOR: "14" } }
+    image: db-analyzer-fixture-pg:14
+    ports: ["5414:5432"]
   pg15:
     <<: *pg
     build: { context: ./postgres, args: { PG_MAJOR: "15" } }

@@ -24,11 +24,13 @@ jobs:
         pg: ["15", "16", "17", "18"]
     env:
       DBX_TEST_PG_VERSIONS: ${{ matrix.pg }}
+      # The PG 15 job also starts PG 14 to test that unsupported versions are refused.
+      DBX_TEST_UNSUPPORTED_PG_VERSIONS: ${{ matrix.pg == '15' && '14' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked
-      - run: make db-up PG=pg${{ matrix.pg }}
+      - run: make db-up PG="pg${{ matrix.pg }} ${{ matrix.pg == '15' && 'pg14' || '' }}"
       - run: make test-integration
       - if: always()
         run: make db-down
