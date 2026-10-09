@@ -1,0 +1,39 @@
+{
+  "_about": "Hand-written expectations for the seeded 'shop' database. Analyzer tests assert their Findings against this file; tests/integration/test_dataset.py asserts the seeded database actually has these properties. Fingerprints follow docs/proposal.md §4.1 (category:subject).",
+  "database": "shop",
+  "hot_tenant_id": 7,
+  "inventory": {
+    "largest_table": "public.events",
+    "partitioned_tables": {
+      "public.usage_records": {"partition_key": "tenant_id", "partitions": "one per tenant"}
+    }
+  },
+  "findings": [
+    {"fingerprint": "missing_index:public.bookings(account_id)", "why": "FK without a leading index; filtered by the workload"},
+    {"fingerprint": "missing_index:public.bookings(tenant_id)", "why": "FK without a leading index; the slow UPDATE filters on it"},
+    {"fingerprint": "missing_index:public.booking_items(booking_id)", "why": "FK without a leading index; filtered by the workload"},
+    {"fingerprint": "missing_index:public.audit_log(tenant_id)", "why": "FK without a leading index"},
+    {"fingerprint": "unused_index:public.idx_accounts_created_at", "why": "never scanned by the workload; the only one (unused excludes PK/unique, invalid, and both members of a duplicate pair: the planner may use either)"},
+    {"fingerprint": "duplicate_index:public.idx_accounts_tenant_dup", "duplicate_of": "public.idx_accounts_tenant"},
+    {"fingerprint": "invalid_index:public.idx_bookings_status_unique", "why": "CREATE UNIQUE INDEX CONCURRENTLY failed on duplicate values"},
+    {"fingerprint": "bloat:public.audit_log", "why": "autovacuum disabled; every row updated twice (page pruning reclaims the first versions, leaving ~1 dead per live row)", "min_dead_tuple_ratio": 0.9, "measured_by": "pgstattuple"},
+    {"fingerprint": "stale_stats:public.legacy_imports", "why": "analyzed at 100 rows, then bulk-loaded with autovacuum disabled", "max_reltuples_ratio": 0.01},
+    {"fingerprint": "hotspot:tenant:7:public.events", "rows_share": 0.35, "bytes_share": 0.5, "tolerance": 0.05},
+    {"fingerprint": "hotspot:tenant:7:public.usage_records", "rows_share": 0.35, "tolerance": 0.05, "measured_by": "partition sizes"}
+  ],
+  "slow_queries": [
+    {"match": "FROM bookings WHERE account_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]},
+    {"match": "FROM booking_items WHERE booking_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]},
+    {"match": "FROM events ORDER BY k", "plan_rules": ["spill_prone_sort"], "temp_blocks": true},
+    {"match": "UPDATE bookings SET amount = amount WHERE tenant_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]}
+  ],
+  "entity_map": {
+    "hierarchy": ["tenant", "account", "booking"],
+    "keys": {
+      "tenant": ["public.accounts.tenant_id", "public.bookings.tenant_id", "public.events.tenant_id", "public.audit_log.tenant_id", "public.usage_records.tenant_id"],
+      "account": ["public.bookings.account_id"],
+      "booking": ["public.booking_items.booking_id"]
+    }
+  },
+  "rollup": {"table": "public.booking_items", "via": ["public.bookings"], "to": "tenant"}
+}

@@ -271,7 +271,8 @@ class Run:
 class Finding:  # stable identity across Runs
     fingerprint: str                   # category + subject, e.g. "unused_index:app.events.ix_events_foo"
     category: Literal["size","slow_query","missing_index","unused_index",
-                      "bloat","hotspot","config"]
+                      "duplicate_index","invalid_index","bloat","stale_stats",
+                      "hotspot","config"]
     subject: CollectionRef | str       # collection, index name, query fingerprint, entity…
     status: Literal["open","acknowledged","fixed","obsolete"]
     first_seen_run: str; last_seen_run: str
@@ -291,8 +292,8 @@ class Observation:  # what one Run saw for one Finding
 |---|---|
 | `slow_query` | hash of the normalized query text (not `queryid`, which changes across major versions and OID differences) |
 | `missing_index` | table + proposed column list in order, e.g. `app.bookings(tenant_id,created_at)` |
-| `unused_index`, other index health | schema-qualified index name |
-| `size`, `bloat` | schema-qualified collection name (+ rule name when a collection can have several, e.g. `toast_oversized`) |
+| `unused_index`, `duplicate_index`, `invalid_index` | schema-qualified index name |
+| `size`, `bloat`, `stale_stats` | schema-qualified collection name (+ rule name when a collection can have several, e.g. `toast_oversized`) |
 | `hotspot` | entity type + entity ID (hashed when §3.5 says so) + collection |
 | `config` | setting name |
 - When a Run that covers a Finding's analyzer no longer observes it, the Finding is flagged "not seen in latest run: fixed?" for the user to confirm. It is never moved to `fixed` automatically. An `acknowledged` Finding stays acknowledged when it is observed again.

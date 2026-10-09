@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from db_analyzer.service import AnalyzerService
+from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn, seed
 
 SUPPORTED = [int(v) for v in os.environ.get("DBX_TEST_PG_VERSIONS", "15,16,17,18").split(",") if v]
 UNSUPPORTED = [
@@ -12,9 +13,19 @@ UNSUPPORTED = [
 ]
 
 
-def dsn(major: int, role: str = "db_analyzer") -> str:
-    """Fixture roles use their name as password: db_analyzer, db_writer, postgres."""
-    return f"postgresql://{role}:{role}@localhost:{5400 + major}/app"
+# Fixture roles: db_analyzer (read-only), db_writer, db_sneaky (both must be refused), postgres.
+dsn = fixture_dsn
+
+
+_seeded: set[int] = set()
+
+
+def seeded_dsn(major: int, role: str = "db_analyzer") -> str:
+    """DSN of the synthetic 'shop' database, seeded at CI scale once per test session."""
+    if major not in _seeded:
+        seed(dsn(major, "postgres", "postgres"), scale="ci")
+        _seeded.add(major)
+    return dsn(major, role, GROUND_TRUTH["database"])
 
 
 @pytest.fixture

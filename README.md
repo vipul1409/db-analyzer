@@ -26,4 +26,10 @@ make test-integration       # integration tests against the fixtures
 make db-down                # stop and remove the fixtures
 ```
 
+### Synthetic dataset
+
+`make db-seed PG=17` creates a `shop` database on that fixture: a multi-tenant schema with seeded problems (a hot tenant, unindexed foreign keys, duplicate/unused/invalid indexes, bloat, stale statistics, a tenant-partitioned table) and a replayed workload in `pg_stat_statements`. `tests/fixtures/dataset/ground_truth.json` lists the Findings it should produce. Integration tests seed it automatically at CI scale (about a second per version).
+
+`make db-seed PG=17 SCALE=full` seeds roughly 5–10 GB for manual and scale testing; expect it to take several minutes.
+
 Start a subset of fixtures with `make db-up PG="pg15 pg16"` and point the integration tests at them with `DBX_TEST_PG_VERSIONS=15,16`.
