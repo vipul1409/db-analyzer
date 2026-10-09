@@ -1,0 +1,41 @@
+# Postgres fixtures for integration tests. Host port = 5400 + major version.
+x-pg: &pg
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: app
+  command:
+    - postgres
+    - -c
+    - shared_preload_libraries=pg_stat_statements
+    - -c
+    - pg_stat_statements.track=all
+    - -c
+    - track_io_timing=on
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+services:
+  pg15:
+    <<: *pg
+    build: { context: ./postgres, args: { PG_MAJOR: "15" } }
+    image: db-analyzer-fixture-pg:15
+    ports: ["5415:5432"]
+  pg16:
+    <<: *pg
+    build: { context: ./postgres, args: { PG_MAJOR: "16" } }
+    image: db-analyzer-fixture-pg:16
+    ports: ["5416:5432"]
+  pg17:
+    <<: *pg
+    build: { context: ./postgres, args: { PG_MAJOR: "17" } }
+    image: db-analyzer-fixture-pg:17
+    ports: ["5417:5432"]
+  pg18:
+    <<: *pg
+    build: { context: ./postgres, args: { PG_MAJOR: "18" } }
+    image: db-analyzer-fixture-pg:18
+    ports: ["5418:5432"]

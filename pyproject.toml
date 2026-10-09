@@ -1,0 +1,45 @@
+[project]
+name = "db-analyzer"
+version = "0.1.0"
+description = "Conversational read-only database analyzer agent (PostgreSQL first)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/db_analyzer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Docs keep compact, hand-formatted code sketches.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs the Docker Postgres fixtures (`make db-up`)",
+]
