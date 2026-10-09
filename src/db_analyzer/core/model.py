@@ -198,6 +198,8 @@ class AuditEntry:
     row_count: int | None
     at: datetime
     thread_id: str | None = None
+    plan_cost: float | None = None  # EXPLAIN total cost, for statements the gate checked
+    plan_rows: int | None = None  # EXPLAIN estimated result rows
 
 
 class ConnectionRefused(Exception):
@@ -213,6 +215,23 @@ class QueryRejected(Exception):
 
 
 GateMetric = Literal["total_cost", "result_rows", "scan_rows"]
+
+
+class QueryCapReached(QueryRejected):
+    """The per-turn query cap stopped a statement: a runaway-loop guard."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"query cap reached: {limit} statements this turn")
+        self.limit = limit
+
+
+@dataclass(frozen=True)
+class PlanMetrics:
+    """What the EXPLAIN gate read from a plan."""
+
+    total_cost: float
+    result_rows: int
+    scan_rows: int
 
 
 class GateRejected(QueryRejected):

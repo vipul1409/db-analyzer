@@ -3,7 +3,7 @@ from typing import Any, NamedTuple
 import psycopg
 import pytest
 
-from db_analyzer.core.model import Connection, GateLimits, GateRejected, StorageStats
+from db_analyzer.core.model import Connection, GateLimits, StorageStats
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn
 
@@ -144,18 +144,13 @@ def test_markdown_report_lists_tables_by_size(service: AnalyzerService, shop: Sh
     assert "(estimate)" in report
 
 
-def test_run_over_gate_limits_fails_with_audited_reason(
+def test_inventory_reads_only_the_catalog_so_the_gate_never_blocks_it(
     service: AnalyzerService, shop: Shop
 ) -> None:
-    service.add_connection(
-        shop.connection.name, "DBX_TEST_SHOP_DSN", gate=GateLimits(max_total_cost=1)
-    )
+    tiny = GateLimits(max_total_cost=1, max_result_rows=1, max_scan_rows=1)
+    service.add_connection(shop.connection.name, "DBX_TEST_SHOP_DSN", gate=tiny)
 
-    with pytest.raises(GateRejected) as e:
-        service.run(shop.id, analyzers=["inventory"])
+    run = service.run(shop.id, analyzers=["inventory"])
 
-    assert e.value.metric == "total_cost"
-    [run] = service.runs(shop.id)
-    assert run.status == "failed"
-    rejected = [a for a in service.audit(shop.id) if a.decision == "rejected"]
-    assert rejected and rejected[0].reason == e.value.reason
+    assert run.status == "complete"
+    assert all(a.plan_cost is None for a in service.audit(shop.id))  # none needed the gate

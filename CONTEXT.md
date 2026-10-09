@@ -26,6 +26,10 @@ _Avoid_: Failed table, excluded table
 A conversation with the agent, bound to one Connection for its whole life.
 _Avoid_: Session, chat (as the stored record)
 
+**Turn**:
+One user message in a Thread and everything the agent does to answer it. A Turn may start Runs, or only explain data already collected.
+_Avoid_: Run (a Turn is a conversational step, not an analysis record), request
+
 **Finding**:
 A problem or fact worth reporting about one subject (a collection, index, query or entity), with an identity (its **fingerprint**: category + subject) that stays stable across Runs.
 _Avoid_: Issue, alert, recommendation
@@ -69,3 +73,7 @@ _Avoid_: Mode, permission level
 **EXPLAIN gate**:
 The check that rejects a statement that reads relation data when its planned cost or row counts exceed the limits. Catalog-only and settings statements are exempt by type.
 _Avoid_: Cost check, complexity filter
+
+**Query cap**:
+The most statements the agent may send to the database in one Turn; reaching it ends the Turn's database work with a stated reason, as a guard against runaway loops.
+_Avoid_: Rate limit, quota

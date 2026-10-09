@@ -44,6 +44,8 @@ class AuditRow(Base):
     duration_ms: Mapped[float | None] = mapped_column(Float)
     row_count: Mapped[int | None] = mapped_column(Integer)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    plan_cost: Mapped[float | None] = mapped_column(Float)
+    plan_rows: Mapped[int | None] = mapped_column(Integer)
 
 
 class RunRow(Base):

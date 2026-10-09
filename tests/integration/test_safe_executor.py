@@ -4,15 +4,17 @@ from typing import Any
 import psycopg
 import pytest
 
+from db_analyzer.adapters.postgres.queries import LIBRARY
 from db_analyzer.adapters.postgres.session import open_session
 from db_analyzer.core.model import (
     AuditEntry,
     GateLimits,
     GateRejected,
+    QueryCapReached,
     QueryRejected,
     SessionLimits,
 )
-from db_analyzer.safety.executor import SafeExecutor
+from db_analyzer.safety.executor import QueryBudget, SafeExecutor
 
 from .conftest import SUPPORTED, dsn
 
@@ -104,3 +106,50 @@ def test_statement_within_gate_limits_runs(session: psycopg.Connection[Any]) -> 
     )
 
     assert len(executor.execute("SELECT generate_series(1, 5) AS n", purpose="test")) == 5
+
+
+def test_agent_sql_runs_under_the_agent_profile(session: psycopg.Connection[Any]) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+    sql = "PREPARE p AS SELECT 1"
+
+    with pytest.raises(QueryRejected, match="agent profile"):
+        executor.execute_agent(sql, purpose="agent")
+    executor.execute(sql, purpose="test")  # internal profile: vetted code path
+
+    assert [(a.sql, a.decision) for a in audit] == [(sql, "rejected"), (sql, "executed")]
+    executor.execute("DEALLOCATE p", purpose="test")
+
+
+def test_catalog_only_template_is_exempt_from_the_gate(session: psycopg.Connection[Any]) -> None:
+    audit: list[AuditEntry] = []
+    tiny = GateLimits(max_total_cost=1, max_result_rows=1, max_scan_rows=1)
+    executor = SafeExecutor(session, "c1", audit=audit.append, gate=tiny)
+    storage_stats = LIBRARY.get("storage_stats", session.info.server_version).sql
+
+    assert executor.execute(storage_stats, purpose="test")
+    assert (audit[0].decision, audit[0].plan_cost) == ("executed", None)
+
+
+def test_gated_statement_records_its_plan_in_the_audit(session: psycopg.Connection[Any]) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+
+    executor.execute("SELECT generate_series(1, 5) AS n", purpose="test")
+
+    assert audit[0].plan_cost is not None and audit[0].plan_cost > 0
+    assert audit[0].plan_rows == 5
+
+
+def test_query_cap_stops_with_a_structured_reason(session: psycopg.Connection[Any]) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append, budget=QueryBudget(2))
+    executor.execute_agent("SELECT 1", purpose="agent")
+    executor.execute_agent("SELECT 2", purpose="agent")
+
+    with pytest.raises(QueryCapReached) as e:
+        executor.execute_agent("SELECT 3", purpose="agent")
+
+    assert e.value.limit == 2
+    assert e.value.reason == "query cap reached: 2 statements this turn"
+    assert [a.decision for a in audit] == ["executed", "executed", "rejected"]

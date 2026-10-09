@@ -7,20 +7,23 @@ node, and the largest row estimate of any scan node anywhere in the tree.
 from collections.abc import Iterator
 from typing import Any
 
-from db_analyzer.core.model import GateLimits, GateRejected
+from db_analyzer.core.model import GateLimits, GateRejected, PlanMetrics
 
 
-def check(explain_json: list[dict[str, Any]], limits: GateLimits) -> None:
+def check(explain_json: list[dict[str, Any]], limits: GateLimits) -> PlanMetrics:
     root = explain_json[0]["Plan"]
-    total_cost = float(root["Total Cost"])
-    result_rows = int(root["Plan Rows"])
-    scan_rows = max((int(n["Plan Rows"]) for n in _nodes(root) if _is_scan(n)), default=0)
-    if total_cost > limits.max_total_cost:
-        raise GateRejected("total_cost", total_cost, limits.max_total_cost)
-    if result_rows > limits.max_result_rows:
-        raise GateRejected("result_rows", result_rows, limits.max_result_rows)
-    if scan_rows > limits.max_scan_rows:
-        raise GateRejected("scan_rows", scan_rows, limits.max_scan_rows)
+    plan = PlanMetrics(
+        total_cost=float(root["Total Cost"]),
+        result_rows=int(root["Plan Rows"]),
+        scan_rows=max((int(n["Plan Rows"]) for n in _nodes(root) if _is_scan(n)), default=0),
+    )
+    if plan.total_cost > limits.max_total_cost:
+        raise GateRejected("total_cost", plan.total_cost, limits.max_total_cost)
+    if plan.result_rows > limits.max_result_rows:
+        raise GateRejected("result_rows", plan.result_rows, limits.max_result_rows)
+    if plan.scan_rows > limits.max_scan_rows:
+        raise GateRejected("scan_rows", plan.scan_rows, limits.max_scan_rows)
+    return plan
 
 
 def _nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:

@@ -12,7 +12,7 @@ uv run dbx connect prod                     # probe the database and show what t
 uv run dbx analyze prod --report out.md     # inventory Run (no LLM): tables by size, estimated rows
 ```
 
-Each `analyze` is recorded as a Run, with its Findings, in the local store. A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement first passes the EXPLAIN gate (cost and row limits) and is written to the audit log.
+Each `analyze` is recorded as a Run, with its Findings, in the local store. A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement passes the guard (read-only allowlist) and, unless it reads only the catalog, the EXPLAIN gate (cost and row limits), and is written to the audit log.
 
 To try it on the synthetic dataset (see Development):
 
@@ -48,3 +48,9 @@ make db-down                # stop and remove the fixtures
 Hot standbys for PG 15 and 16 (ports 5515/5516) are behind a compose profile: `make db-up PG="pg15 pg16 pg15-standby pg16-standby"`. Spikes (`tests/spikes`) are run by hand with `uv run pytest -m spike -s`.
 
 Start a subset of fixtures with `make db-up PG="pg15 pg16"` and point the integration tests at them with `DBX_TEST_PG_VERSIONS=15,16`.
+
+### Safety suites
+
+`tests/safety/corpus.py` lists about 270 statements the analyzer must never run. `make check` asserts the guard rejects all of them; `make test-integration` runs the ones the read-only role should also refuse, with the guard bypassed (ADR 0004).
+
+The guard's function allowlist is built from `src/db_analyzer/safety/pg_catalog.json`, a snapshot of PG 15–18. When adding a Postgres version, start its fixture and regenerate it with `uv run python -m tests.fixtures.catalog_snapshot`; an integration test fails while it is out of date.

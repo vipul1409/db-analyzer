@@ -301,4 +301,6 @@ def _audit_entry(row: AuditRow) -> AuditEntry:
         row_count=row.row_count,
         at=row.at.replace(tzinfo=UTC),
         thread_id=row.thread_id,
+        plan_cost=row.plan_cost,
+        plan_rows=row.plan_rows,
     )
