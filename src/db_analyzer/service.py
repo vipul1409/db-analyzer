@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -62,6 +63,7 @@ from db_analyzer.core.model import (
     SessionLimits,
     StorageStats,
     Thread,
+    UnknownCollections,
 )
 from db_analyzer.safety.aliases import Aliases, assign
 from db_analyzer.safety.executor import QueryBudget, Row, SafeExecutor
@@ -124,8 +126,16 @@ class AnalyzerService:
         thread_id: str | None = None,
         budget: QueryBudget | None = None,
         on_sql: SqlObserver | None = None,
+        *,
+        collections: Sequence[str] | None = None,
+        exact_counts: bool = False,
     ) -> Run:
-        """A deterministic Run, no LLM: probe, measure, record Findings and Observations."""
+        """A deterministic Run, no LLM: probe, measure, record Findings and Observations.
+
+        `collections` targets the Run at those tables (schema-qualified, or bare when
+        unambiguous); None measures every one. `exact_counts` also counts their rows with
+        count(*), each only where the EXPLAIN gate allows: a refused count is recorded on the
+        collection with its reason, and the collection keeps its estimate."""
         if unsupported := set(analyzers) - set(SUPPORTED_ANALYZERS):
             raise ValueError(f"analyzers not available yet: {sorted(unsupported)}")
         connection = self._store.get_connection(connection_id)
@@ -134,9 +144,15 @@ class AnalyzerService:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
                 measured = pg_inventory.storage_stats(executor, probe.server_version_num)
+                if collections is not None:
+                    measured = inventory.select(measured, list(collections))
+                measured = _measure_table_data(
+                    executor, probe, connection.gate, measured, exact_counts
+                )
             self._store.save_probe(connection.id, probe)
             self._store.save_snapshots(run.id, measured)
-            self._store.record_observations(connection.id, run.id, inventory.analyze(measured))
+            found = inventory.analyze(measured, broad=collections is None)
+            self._store.record_observations(connection.id, run.id, found)
         except BaseException:
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
             raise
@@ -161,6 +177,10 @@ class AnalyzerService:
 
     def runs(self, connection_id: str) -> list[Run]:
         return self._store.runs(connection_id)
+
+    def run_observations(self, run_id: str) -> list[Observation]:
+        """What a Run observed, in the analyzer's rank order (most severe first)."""
+        return self._store.run_observations(run_id)
 
     def storage(self, run_id: str) -> list[StorageStats]:
         """Collection sizes measured by a Run."""
@@ -230,12 +250,13 @@ class AnalyzerService:
             agent, gateway = self._agent(thread, AgentTurn(self, thread), cp, http, aliases)
             gateway.cassette = _cassette(settings, await _turns_so_far(agent, config))
             try:
-                async for mode, chunk in agent.astream(
+                async for namespace, mode, chunk in agent.astream(
                     {"messages": [HumanMessage(content=message)]},
                     config,
                     stream_mode=["messages", "updates", "custom"],
+                    subgraphs=True,  # a subagent's tool and SQL events stream only this way
                 ):
-                    for event in translator.translate(mode, chunk):
+                    for event in translator.translate(mode, chunk, namespace):
                         yield event
             except (CassetteExhausted, CassetteMismatch):
                 raise  # a stale recording must fail the test, not become an event
@@ -273,13 +294,13 @@ class AnalyzerService:
             aliases=aliases,
         )
         middleware = [
-            *extra,
             TurnLimits(settings.max_tokens_per_turn, settings.max_tool_calls_per_turn),
             StrictTools(),
-            gateway,
+            gateway,  # shared with subagents: one concurrency cap, log and cassette per Turn
         ]
         tools = build_tools(turn, self.capabilities(thread.connection_id))
-        return build_agent(make_model(settings, http), tools, middleware, checkpointer), gateway
+        model = make_model(settings, http)
+        return build_agent(model, tools, middleware, checkpointer, extra), gateway
 
     def _aliases(self, thread: Thread) -> Aliases | None:
         """The Connection's identifier aliases, extended to names added since the last Turn,
@@ -317,6 +338,66 @@ class AnalyzerService:
             yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
 
 
+def _measure_table_data(
+    executor: SafeExecutor,
+    probe: ProbeResult,
+    gate: GateLimits,
+    measured: list[StorageStats],
+    exact_counts: bool,
+) -> list[StorageStats]:
+    """The measurements that read table data rather than the catalog: a dead-tuple scan where
+    the counters suggest bloat, and exact counts when asked. Each is skipped, with the reason,
+    where the gate or a privilege refuses it; the query cap skips everything after it."""
+    out: dict[int, StorageStats] = {i: s for i, s in enumerate(measured)}
+    pgstattuple = probe.extension_schemas.get("pgstattuple")
+    jobs: list[tuple[int, str]] = [
+        (i, "dead_tuple_scan") for i, s in out.items() if inventory.needs_dead_tuple_scan(s)
+    ]
+    if exact_counts:  # smallest first, so a cap or timeout costs the fewest counts
+        jobs += [(i, "exact_count") for i in sorted(out, key=lambda i: out[i].total_bytes)]
+
+    def skip(i: int, job: str, why: str) -> None:
+        out[i] = replace(out[i], skipped={**out[i].skipped, job: why})
+
+    capped: str | None = None
+    for i, job in jobs:
+        s = out[i]
+        if capped is not None:
+            skip(i, job, capped)
+            continue
+        try:
+            if job == "exact_count":
+                n = pg_inventory.count_exactly(executor, s.ref)
+                out[i] = replace(s, row_count=n, row_count_method="exact")
+            elif pgstattuple is None:
+                skip(i, job, "pgstattuple is not installed")
+            elif (rows := _rows_to_read(s)) > gate.max_scan_rows:
+                skip(
+                    i,
+                    job,
+                    f"about {rows:,} rows to read exceeds the scan limit ({gate.max_scan_rows:,})",
+                )
+            else:
+                out[i] = replace(
+                    s, dead_tuple_scan=pg_inventory.scan_dead_tuples(executor, s.ref, pgstattuple)
+                )
+        except QueryCapReached as e:
+            capped = e.reason
+            skip(i, job, capped)
+        except QueryRejected as e:
+            skip(i, job, e.reason)
+        except psycopg.errors.InsufficientPrivilege:
+            skip(i, job, "no SELECT privilege on the table")
+        except psycopg.Error as e:
+            skip(i, job, str(e).strip())
+    return list(out.values())
+
+
+def _rows_to_read(s: StorageStats) -> int:
+    m = s.maintenance
+    return 0 if m is None else m.live_rows + m.dead_rows
+
+
 class AgentTurn:
     """The TurnBackend the agent's tools call: one Thread's Connection, one Turn's query cap,
     and SQL and Run events streamed to the caller. Failures come back as explicit errors, so
@@ -350,9 +431,30 @@ class AgentTurn:
                 _sql_events(emit),
             )
             emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.storage(run, self._service.storage(run.id), top_n)
+            return digest.storage(
+                run, self._service.storage(run.id), self._service.run_observations(run.id), top_n
+            )
 
         return self._guarded(measure)
+
+    def count_exact(self, tables: list[str], all_tables: bool) -> dict[str, Any]:
+        if not tables and not all_tables:
+            return {"error": "name the tables to count, or set all_tables"}
+
+        def count(emit: Callable[[Any], None]) -> dict[str, Any]:
+            run = self._service.run(
+                self._thread.connection_id,
+                ["inventory"],
+                self._thread.id,
+                self._budget,
+                _sql_events(emit),
+                collections=None if all_tables else tables,
+                exact_counts=True,
+            )
+            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
+            return digest.exact_counts(run, self._service.storage(run.id))
+
+        return self._guarded(count)
 
     def sql(self, sql: str, purpose: str) -> dict[str, Any]:
         return self._guarded(
@@ -376,7 +478,7 @@ class AgentTurn:
             used = self._budget.used
             emit(LimitReached(limit="queries", used=used, max=e.limit).model_dump())
             return {"error": e.reason}
-        except (QueryRejected, ConnectionRefused) as e:
+        except (QueryRejected, ConnectionRefused, UnknownCollections) as e:
             return {"error": str(e)}
         except psycopg.Error as e:
             return {"error": f"database error: {str(e).strip()}"}

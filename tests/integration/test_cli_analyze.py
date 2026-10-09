@@ -34,3 +34,32 @@ def test_analyze_unknown_connection_fails_cleanly(
 
     assert result.exit_code == 1
     assert "No Connection named 'nope'" in result.output
+
+
+def test_analyze_counts_rows_exactly_on_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBX_HOME", str(tmp_path))
+    monkeypatch.setenv("DBX_DSN", seeded_dsn(SUPPORTED[-1]))
+    runner = CliRunner()
+    assert runner.invoke(app, ["connect", "shop"]).exit_code == 0
+
+    result = runner.invoke(
+        app, ["analyze", "shop", "--table", "public.tenants", "--exact-counts"], terminal_width=200
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "public.tenants" in result.output and "public.events" not in result.output
+    assert "20 (exact)" in result.output
+
+
+def test_analyze_shows_ranked_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DBX_HOME", str(tmp_path))
+    monkeypatch.setenv("DBX_DSN", seeded_dsn(SUPPORTED[-1]))
+    runner = CliRunner()
+    assert runner.invoke(app, ["connect", "shop"]).exit_code == 0
+
+    result = runner.invoke(app, ["analyze", "shop"], terminal_width=200)
+
+    assert result.exit_code == 0, result.output
+    assert "1. high bloat:public.audit_log" in result.output

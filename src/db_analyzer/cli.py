@@ -15,7 +15,13 @@ from rich.table import Table
 
 from db_analyzer.agent.events import AgentEvent
 from db_analyzer.agent.llm import LLMConfigError
-from db_analyzer.core.model import ConnectionRefused, ProbeResult, QueryRejected, Run
+from db_analyzer.core.model import (
+    ConnectionRefused,
+    ProbeResult,
+    QueryRejected,
+    Run,
+    UnknownCollections,
+)
 from db_analyzer.core.units import format_bytes
 from db_analyzer.service import AnalyzerService
 
@@ -63,8 +69,19 @@ def analyze(
     report: Annotated[
         Path | None, typer.Option(help="Write a Markdown report of the Run to this file.")
     ] = None,
+    table: Annotated[
+        list[str] | None,
+        typer.Option(help="Analyse only this table (schema.table); repeat for more."),
+    ] = None,
+    exact_counts: Annotated[
+        bool,
+        typer.Option(
+            help="Also count rows with count(*), for each table the EXPLAIN gate allows; "
+            "the others keep their estimate and show why."
+        ),
+    ] = False,
 ) -> None:
-    """Run the deterministic inventory analysis (no LLM) and show tables by size."""
+    """Run the deterministic inventory analysis (no LLM): tables by size and ranked Findings."""
     service = AnalyzerService()
     try:
         connection = service.connection(name)
@@ -72,7 +89,13 @@ def analyze(
         console.print(f"[bold red]No Connection named {name!r}.[/] Add it with `dbx connect`.")
         raise typer.Exit(1) from e
     with _database_errors("Analysis failed"):
-        run = service.run(connection.id, analyzers=["inventory"])
+        try:
+            run = service.run(
+                connection.id, ["inventory"], collections=table or None, exact_counts=exact_counts
+            )
+        except UnknownCollections as e:
+            console.print(f"[bold red]{e}[/]")
+            raise typer.Exit(1) from e
     _render_run(service, run)
     if report is not None:
         report.write_bytes(service.export(run.id, "md"))
@@ -201,7 +224,7 @@ def _database_errors(failed: str) -> Iterator[None]:
 def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
     measured = sorted(service.storage(run.id), key=lambda s: -s.total_bytes)
     table = Table(title=f"Largest of {len(measured)} tables (Run {run.id[:8]}, {run.status})")
-    for column in ("#", "Table", "Total", "Heap", "Indexes", "TOAST", "Rows (estimate)"):
+    for column in ("#", "Table", "Total", "Heap", "Indexes", "TOAST", "Rows"):
         table.add_column(column, justify="left" if column == "Table" else "right")
     for rank, s in enumerate(measured[:top], start=1):
         table.add_row(
@@ -211,9 +234,15 @@ def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
             format_bytes(s.data_bytes),
             format_bytes(s.index_bytes),
             format_bytes(s.toast_bytes) if s.toast_bytes is not None else "-",
-            "unknown" if s.row_count is None else f"{s.row_count:,}",
+            "unknown" if s.row_count is None else f"{s.row_count:,} ({s.row_count_method})",
         )
     console.print(table)
+    problems = [o for o in service.run_observations(run.id) if o.severity != "info"]
+    for rank, o in enumerate(problems, start=1):
+        console.print(f"{rank}. [bold]{o.severity}[/] {escape(o.fingerprint)}: {escape(o.title)}")
+    for s in measured:
+        for what, why in s.skipped.items():
+            console.print(f"[yellow]{s.ref.qualified}: {what.replace('_', ' ')} skipped:[/] {why}")
 
 
 def _render_probe(name: str, p: ProbeResult) -> None:

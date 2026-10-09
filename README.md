@@ -10,14 +10,15 @@ Create the read-only login with `docs/setup/postgres_role.sql` (Azure notes in `
 export DBX_DSN='postgresql://db_analyzer:<secret>@host:5432/app'
 uv run dbx connect prod                     # probe the database and show what the analyzer can see
 uv run dbx connect prod --alias-identifiers # optional: the LLM sees schema/table/column names as aliases
-uv run dbx analyze prod --report out.md     # inventory Run (no LLM): tables by size, estimated rows
+uv run dbx analyze prod --report out.md     # inventory Run (no LLM): sizes, schema totals, ranked Findings
+uv run dbx analyze prod --table public.orders --exact-counts   # optional: count(*) where the EXPLAIN gate allows
 uv run --env-file .env dbx chat prod        # chat with the agent (needs OPENAI_API_KEY)
 uv run --env-file .env dbx chat prod --thread <id>   # resume a conversation, even after a restart
 ```
 
-`dbx chat` streams the answer and shows each tool call and every SQL statement as it runs. Beyond its dedicated tools, the agent may write its own read-only SQL; any statement whose output could carry row values (`SELECT email …`) is rejected before it runs, so the LLM sees only metadata, aggregates and entity keys. With `--alias-identifiers`, names reach the LLM only as aliases (`table_3`) and `dbx chat` shows the real ones. Each conversation is a Thread bound to one Connection; the agent's model is `DBX_MODEL` (default `gpt-5.4-mini`). A turn stops cleanly at 200k tokens or 60 tool calls.
+`dbx chat` streams the answer and shows each tool call and every SQL statement as it runs, including those of the subagent it delegates to: "Analyse storage" goes to the inventory-analyst, which answers with Findings ranked by severity (bloat, stale statistics, tables with more index than heap, oversized TOAST). Beyond its dedicated tools, the agent may write its own read-only SQL; any statement whose output could carry row values (`SELECT email …`) is rejected before it runs, so the LLM sees only metadata, aggregates and entity keys. With `--alias-identifiers`, names reach the LLM only as aliases (`table_3`) and `dbx chat` shows the real ones. Each conversation is a Thread bound to one Connection; the agent's model is `DBX_MODEL` (default `gpt-5.4-mini`). A turn stops cleanly at 200k tokens or 60 tool calls.
 
-Each `analyze` is recorded as a Run, with its Findings, in the local store. A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement passes the guard (read-only allowlist) and, unless it reads only the catalog, the EXPLAIN gate (cost and row limits), and is written to the audit log.
+Each `analyze` is recorded as a Run, with its Findings, in the local store. Sizes, row estimates and vacuum/analyze recency come from the catalog; a partitioned table is summed over its partitions. Two measurements read table data and run only where allowed: exact counts (opt-in) and, for tables whose counters suggest bloat, a `pgstattuple_approx` scan. One that is refused is listed with its reason, and the table keeps its estimate (ADR 0007). A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement passes the guard (read-only allowlist) and, unless it reads only the catalog, the EXPLAIN gate (cost and row limits), and is written to the audit log.
 
 To try it on the synthetic dataset (see Development):
 
@@ -46,7 +47,7 @@ make db-down                # stop and remove the fixtures
 
 ### Synthetic dataset
 
-`make db-seed PG=17` creates a `shop` database on that fixture: a multi-tenant schema with seeded problems (a hot tenant, unindexed foreign keys, duplicate/unused/invalid indexes, bloat, stale statistics, a tenant-partitioned table) and a replayed workload in `pg_stat_statements`. `tests/fixtures/dataset/ground_truth.json` lists the Findings it should produce. Integration tests seed it automatically at CI scale (about a second per version).
+`make db-seed PG=17` creates a `shop` database on that fixture: a multi-tenant schema with seeded problems (a hot tenant, unindexed foreign keys, duplicate/unused/invalid indexes, bloat, stale statistics, a tenant-partitioned table, and an index-heavy link table in a second schema, `reference`) and a replayed workload in `pg_stat_statements`. `tests/fixtures/dataset/ground_truth.json` lists the Findings it should produce. Integration tests seed it automatically at CI scale (about a second per version).
 
 `make db-seed PG=17 SCALE=full` seeds roughly 5–10 GB for manual and scale testing; expect it to take several minutes.
 

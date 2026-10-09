@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -5,7 +6,9 @@ import pytest
 from db_analyzer.core.model import (
     CollectionKind,
     CollectionRef,
+    DeadTupleScan,
     GateLimits,
+    Maintenance,
     Observed,
     StorageStats,
 )
@@ -70,6 +73,32 @@ def test_findings_are_per_connection(store: Store, connection_id: str) -> None:
 def test_snapshots_round_trip(store: Store, connection_id: str) -> None:
     run = store.start_run(connection_id, None)
     measured = [StorageStats(EVENTS, 10, "estimate", 100, 20, 5, 125)]
+
+    store.save_snapshots(run.id, measured)
+
+    assert store.snapshots(run.id) == measured
+
+
+def test_snapshots_round_trip_activity_scans_and_skipped_measurements(
+    store: Store, connection_id: str
+) -> None:
+    run = store.start_run(connection_id, None)
+    at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    measured = [
+        StorageStats(
+            EVENTS,
+            10,
+            "exact",
+            100,
+            20,
+            5,
+            125,
+            partitions=4,
+            maintenance=Maintenance(10, 3, 2, at, None, autovacuum_disabled=True),
+            dead_tuple_scan=DeadTupleScan(10, 3, 12.5, 4.0),
+            skipped={"exact_count": "total cost 3e+06 > 2e+06"},
+        )
+    ]
 
     store.save_snapshots(run.id, measured)
 

@@ -122,3 +122,27 @@ def test_aliases_are_shown_as_real_names_even_split_across_chunks() -> None:
     )
     assert "".join(e.text for e in events if isinstance(e, Token)) == "Biggest: public.events"
     assert t.answer == "Biggest: public.events"
+
+
+SUBAGENT = ("tools:3f2a",)  # LangGraph namespace of a subagent running inside the task tool
+
+
+def test_subagent_tool_and_sql_events_stream_but_its_text_is_not_the_answer() -> None:
+    t = Translator()
+    t.translate(*messages(AIMessageChunk(content="Delegating. ", id="m1")))
+    call = {"name": "get_storage_stats", "args": {"top_n": 10}, "id": "s1"}
+    executed = SqlExecuted(
+        sql="SELECT 1", purpose="inventory", duration_ms=1.0, row_count=1, plan_cost=None
+    )
+
+    events = [
+        *t.translate(*updates(AIMessage(content="", tool_calls=[call])), namespace=SUBAGENT),
+        *t.translate("custom", executed.model_dump(), namespace=SUBAGENT),
+        *t.translate(*messages(AIMessageChunk(content="sub report", id="s2")), namespace=SUBAGENT),
+    ]
+
+    assert events == [
+        ToolStarted(call_id="s1", name="get_storage_stats", args={"top_n": 10}),
+        executed,
+    ]
+    assert t.answer == "Delegating. "

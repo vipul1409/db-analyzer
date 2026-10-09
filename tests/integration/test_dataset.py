@@ -167,3 +167,20 @@ def test_analyzer_role_can_read_every_table(shop: psycopg.Connection[Any]) -> No
              AND NOT has_table_privilege('db_analyzer', c.oid, 'SELECT')"""
     ).fetchall()
     assert unreadable == []
+
+
+def test_index_heavy_table_has_more_index_than_heap(shop: psycopg.Connection[Any]) -> None:
+    [table] = {s.split(":")[0] for s in findings("size") if s.endswith(":index_heavy")}
+    heap, index = shop.execute(
+        "SELECT pg_relation_size(%s::regclass), pg_indexes_size(%s::regclass)", (table, table)
+    ).fetchone() or (0, 0)
+    assert index > heap >= 1024 * 1024
+
+
+def test_tables_per_schema_match(shop: psycopg.Connection[Any]) -> None:
+    rows = shop.execute(
+        """SELECT n.nspname, count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname IN ('public', 'reference') AND c.relkind IN ('r', 'p')
+             AND NOT c.relispartition GROUP BY 1"""
+    ).fetchall()
+    assert dict(rows) == GROUND_TRUTH["inventory"]["schemas"]

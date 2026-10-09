@@ -153,8 +153,12 @@ class Translator:
         self._aliases = aliases
         self._pending = ""
 
-    def translate(self, mode: str, chunk: Any) -> list[AgentEvent]:
-        events = self._translate(mode, chunk)
+    def translate(self, mode: str, chunk: Any, namespace: tuple[str, ...] = ()) -> list[AgentEvent]:
+        """`namespace` is LangGraph's subgraph path: empty for the orchestrator, non-empty for a
+        subagent, whose tool and SQL events stream but whose text is a report to the
+        orchestrator, not the answer."""
+        subagent = bool(namespace)
+        events = self._translate(mode, chunk, subagent)
         if self._aliases is None:
             return events
         out: list[AgentEvent] = []
@@ -163,7 +167,7 @@ class Translator:
                 out += self._hold(e.text)
             else:
                 out += self.flush()
-                if isinstance(e, ToolStarted):
+                if isinstance(e, ToolStarted) and not subagent:
                     self.answer = ""  # the flushed text was a preamble too
                 out.append(self._unalias(e, self._aliases))
         return out
@@ -193,14 +197,14 @@ class Translator:
             return event.model_copy(update={"summary": aliases.unalias(event.summary)})
         return event
 
-    def _translate(self, mode: str, chunk: Any) -> list[AgentEvent]:
+    def _translate(self, mode: str, chunk: Any, subagent: bool = False) -> list[AgentEvent]:
         if mode == "messages":
             msg, meta = chunk
-            if meta.get("langgraph_node") != "model":
+            if subagent or meta.get("langgraph_node") != "model":
                 return []
             return self._tokens(msg)
         if mode == "updates":
-            return [e for update in chunk.values() for e in self._update(update)]
+            return [e for update in chunk.values() for e in self._update(update, subagent)]
         if mode == "custom":
             # Our tools write AgentEvents; libraries may write other payloads, which we skip.
             if isinstance(chunk, dict) and chunk.get("type") in _EVENT_TYPES:
@@ -217,14 +221,14 @@ class Translator:
             return [Token(text=text)]
         return []
 
-    def _update(self, update: Any) -> list[AgentEvent]:
+    def _update(self, update: Any, subagent: bool = False) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         for msg in (update or {}).get("messages", []) if isinstance(update, dict) else []:
             if isinstance(msg, AIMessage) and msg.name == TURN_LIMIT:
                 meta = msg.response_metadata
                 events.append(LimitReached(limit=meta["limit"], used=meta["used"], max=meta["max"]))
             elif isinstance(msg, AIMessage):
-                if msg.tool_calls:
+                if msg.tool_calls and not subagent:
                     self.answer = ""  # text before a tool call is a preamble, not the answer
                 events += [
                     ToolStarted(call_id=c["id"] or "", name=c["name"], args=c["args"])

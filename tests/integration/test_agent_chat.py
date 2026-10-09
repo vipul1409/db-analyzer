@@ -103,6 +103,33 @@ def test_biggest_tables_answer_matches_the_ground_truth(agent: Agent) -> None:
     assert events[-1] == done and done.ok
 
 
+def test_analyse_storage_delegates_to_the_inventory_analyst_and_ranks_findings(
+    agent: Agent,
+) -> None:
+    service = agent.service()
+    thread = service.start_thread(agent.connection.id)
+
+    events = turn(service, thread.id, "Analyse storage")
+
+    assert not of(events, Error)
+    started = of(events, ToolStarted)
+    [task] = [t for t in started if t.name == "task"]
+    assert task.args["subagent_type"] == "inventory-analyst"
+    assert "get_storage_stats" in [t.name for t in started], "the subagent's tools stream"
+    assert of(events, SqlExecuted), "and so does its SQL"
+    [run] = of(events, RunFinished)
+    ranked = [o.fingerprint for o in service.run_observations(run.run_id) if o.severity != "info"]
+    assert ranked == [
+        "bloat:public.audit_log",
+        "stale_stats:public.legacy_imports",
+        "size:reference.sku_categories:index_heavy",
+    ]
+    answer = of(events, Done)[0].answer
+    positions = [answer.find(fp.split(":")[1].split(".")[1]) for fp in ranked]
+    assert -1 not in positions, answer
+    assert positions == sorted(positions), "findings are presented in rank order"
+
+
 def test_aggregate_ad_hoc_sql_answers_in_chat(agent: Agent) -> None:
     service = agent.service()
     thread = service.start_thread(agent.connection.id)

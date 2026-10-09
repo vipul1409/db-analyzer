@@ -16,7 +16,8 @@ GRANT pg_monitor TO db_analyzer;
 GRANT CONNECT ON DATABASE :"dbname" TO db_analyzer;
 
 -- Repeat for each schema to analyse. SELECT on tables is optional: without it inventory,
--- workload and index advice still work; hotspot counts are reported as unavailable.
+-- workload and index advice still work; exact row counts and hotspot counts are reported as
+-- skipped. pgstattuple_approx needs USAGE on the schema and pg_monitor, not SELECT.
 GRANT USAGE ON SCHEMA public TO db_analyzer;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO db_analyzer;
 -- Tables created later need this too. Run it as each role that creates tables (e.g. the app's

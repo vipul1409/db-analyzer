@@ -26,6 +26,10 @@ _Avoid_: Analysis (as a noun for the record), scan, turn
 A collection a Run planned to measure but did not (gate rejection, missing privilege). It is outside the Run's scope and makes the Run partial.
 _Avoid_: Failed table, excluded table
 
+**Skipped measurement**:
+One measurement a Run planned for a collection it did measure, but did not take (an exact count the EXPLAIN gate refused, a dead-tuple scan over the scan limit), recorded with the reason. The collection stays in scope with what was measured, such as an estimated row count, and the Run is not partial.
+_Avoid_: Skipped collection (the collection was measured), failed count
+
 **Thread**:
 A conversation with the agent, bound to one Connection for its whole life.
 _Avoid_: Session, chat (as the stored record)
@@ -35,7 +39,7 @@ One user message in a Thread and everything the agent does to answer it. A Turn 
 _Avoid_: Run (a Turn is a conversational step, not an analysis record), request
 
 **Finding**:
-A problem or fact worth reporting about one subject (a collection, index, query or entity), with an identity (its **fingerprint**: category + subject) that stays stable across Runs.
+A problem or fact worth reporting about one subject (a collection, index, query or entity), with an identity (its **fingerprint**: category + subject, plus a rule name where one subject can have several Findings of a category, e.g. `size:public.docs:toast_oversized`) that stays stable across Runs.
 _Avoid_: Issue, alert, recommendation
 
 **Obsolete finding**:

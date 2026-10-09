@@ -1,9 +1,11 @@
+import re
 from typing import Any, NamedTuple
 
 import psycopg
 import pytest
 
-from db_analyzer.core.model import Connection, GateLimits, StorageStats
+from db_analyzer.analyzers import inventory
+from db_analyzer.core.model import Connection, GateLimits, StorageStats, UnknownCollections
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn
 
@@ -20,8 +22,14 @@ SHOP_TABLES = {
     "public.audit_log",
     "public.legacy_imports",
     "public.usage_records",
+    "reference.sku_categories",
 }
 STALE = "public.legacy_imports"  # ground truth: statistics deliberately out of date
+INVENTORY_PROBLEMS = {  # ground-truth Findings the inventory analyzer is responsible for
+    f["fingerprint"]: f
+    for f in GROUND_TRUTH["findings"]
+    if f["fingerprint"].split(":")[0] in ("bloat", "stale_stats", "size")
+}
 
 
 class Shop(NamedTuple):
@@ -47,7 +55,7 @@ def truth(shop: Shop) -> dict[str, dict[str, Any]]:
     built from the fork sizes, independently of the template's total - index - toast."""
     with psycopg.connect(fixture_dsn(shop.major, "postgres", GROUND_TRUTH["database"])) as conn:
         rows = conn.execute(
-            """SELECT 'public.' || c.relname,
+            """SELECT n.nspname || '.' || c.relname,
                       sum(pg_relation_size(p.oid, 'main') + pg_relation_size(p.oid, 'fsm')
                           + pg_relation_size(p.oid, 'vm')),
                       sum(pg_indexes_size(p.oid)),
@@ -57,9 +65,10 @@ def truth(shop: Shop) -> dict[str, dict[str, Any]]:
                FROM pg_class c
                LEFT JOIN LATERAL pg_partition_tree(c.oid) t ON c.relkind = 'p' AND t.isleaf
                JOIN pg_class p ON p.oid = coalesce(t.relid, c.oid)
-               WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname IN ('public', 'reference') AND c.relkind IN ('r', 'p')
                  AND NOT c.relispartition
-               GROUP BY c.relname"""
+               GROUP BY n.nspname, c.relname"""
         ).fetchall()
         return {
             name: {
@@ -138,13 +147,37 @@ def test_markdown_report_lists_tables_by_size(service: AnalyzerService, shop: Sh
     report = service.export(run.id, "md").decode()
 
     assert report.startswith("# Inventory report: ")
-    rows = [line for line in report.splitlines() if line.startswith("| ") and "public." in line]
+    rows = [line for line in report.splitlines() if re.match(r"\| \d+ \| \w+\.", line)]
     assert rows[0].startswith("| 1 | public.events |")
     assert len(rows) >= len(SHOP_TABLES)
     assert "(estimate)" in report
+    assert "| public.usage_records | partitioned table (20 partitions) |" in report.replace(
+        f"({tenants(shop)} partitions)", "(20 partitions)"
+    )
+    schemas = report.split("## Schemas")[1].split("##")[0]
+    assert "| public | 8 |" in schemas and "| reference | 1 |" in schemas
+    findings = report.split("## Findings")[1].split("##")[0].strip().splitlines()
+    assert findings[0].startswith("1. **high** `bloat:public.audit_log`")
+    assert "Autovacuum is disabled" in report  # recommendations are shown
 
 
-def test_inventory_reads_only_the_catalog_so_the_gate_never_blocks_it(
+def test_markdown_report_flags_exact_counts_and_skipped_ones(
+    service: AnalyzerService, shop: Shop
+) -> None:
+    service.add_connection(
+        shop.connection.name, "DBX_TEST_SHOP_DSN", gate=GateLimits(max_scan_rows=1_000)
+    )
+    run = service.run(
+        shop.id, ["inventory"], collections=["public.tenants", "public.events"], exact_counts=True
+    )
+
+    report = service.export(run.id, "md").decode()
+
+    assert re.search(r"\| public\.tenants \|.*\| 20 \(exact\) \|", report)
+    assert "- public.events: exact count skipped: scan rows" in report
+
+
+def test_sizes_are_read_from_the_catalog_so_the_gate_never_blocks_them(
     service: AnalyzerService, shop: Shop
 ) -> None:
     tiny = GateLimits(max_total_cost=1, max_result_rows=1, max_scan_rows=1)
@@ -153,4 +186,109 @@ def test_inventory_reads_only_the_catalog_so_the_gate_never_blocks_it(
     run = service.run(shop.id, analyzers=["inventory"])
 
     assert run.status == "complete"
-    assert all(a.plan_cost is None for a in service.audit(shop.id))  # none needed the gate
+    assert set(measured(service, run.id)) == SHOP_TABLES
+    audit = service.audit(shop.id)
+    assert all(a.plan_cost is None for a in audit if a.purpose == "inventory")
+    # Only the dead-tuple scan reads table data; the gate keeps it out, with the reason.
+    log = measured(service, run.id)["public.audit_log"]
+    assert log.dead_tuple_scan is None
+    assert "scan limit" in log.skipped["dead_tuple_scan"]
+
+
+def test_partitions_roll_up_into_their_parent(service: AnalyzerService, shop: Shop) -> None:
+    run = service.run(shop.id, analyzers=["inventory"])
+    sizes = measured(service, run.id)
+
+    usage = sizes["public.usage_records"]
+    assert usage.partitions == tenants(shop)  # ground truth: one partition per tenant
+    assert all(s.partitions is None for name, s in sizes.items() if name != "public.usage_records")
+    assert not any("usage_records_t" in name for name in sizes), "leaves are not listed alone"
+
+
+def test_schema_rollup_matches_ground_truth(service: AnalyzerService, shop: Shop) -> None:
+    run = service.run(shop.id, analyzers=["inventory"])
+    expected = truth(shop)
+
+    rollup = {t.schema: t for t in inventory.schema_rollup(service.storage(run.id))}
+
+    assert {s: t.collections for s, t in rollup.items()} == GROUND_TRUTH["inventory"]["schemas"]
+    for schema, t in rollup.items():
+        in_schema = [v for name, v in expected.items() if name.startswith(f"{schema}.")]
+        assert t.total_bytes == pytest.approx(sum(v["total_bytes"] for v in in_schema), rel=0.02)
+        assert t.index_bytes == pytest.approx(sum(v["index_bytes"] for v in in_schema), rel=0.02)
+
+
+def test_vacuum_and_analyze_recency_are_measured(service: AnalyzerService, shop: Shop) -> None:
+    run = service.run(shop.id, analyzers=["inventory"])
+    sizes = measured(service, run.id)
+
+    for name, s in sizes.items():
+        assert s.maintenance is not None, name
+        assert s.maintenance.last_analyze is not None, name  # the seed analyzes every table
+    assert sizes["public.audit_log"].maintenance.autovacuum_disabled  # type: ignore[union-attr]
+    assert not sizes["public.events"].maintenance.autovacuum_disabled  # type: ignore[union-attr]
+
+
+def test_seeded_problems_become_exactly_the_expected_findings(
+    service: AnalyzerService, shop: Shop
+) -> None:
+    run = service.run(shop.id, analyzers=["inventory"])
+
+    problems = {o.fingerprint: o for o in service.run_observations(run.id) if o.severity != "info"}
+
+    assert set(problems) == set(INVENTORY_PROBLEMS)
+    bloat = problems["bloat:public.audit_log"]
+    assert bloat.evidence["measured_by"] == "pgstattuple_approx"
+    min_wasted = INVENTORY_PROBLEMS["bloat:public.audit_log"]["min_wasted_percent"]
+    assert bloat.evidence["wasted_percent"] >= min_wasted
+    assert bloat.evidence["autovacuum_disabled"] is True
+    stale = problems[f"stale_stats:{STALE}"]
+    max_ratio = INVENTORY_PROBLEMS[f"stale_stats:{STALE}"]["max_reltuples_ratio"]
+    assert stale.evidence["estimated_rows"] <= max_ratio * stale.evidence["live_rows"]
+
+
+def test_exact_counts_run_where_the_gate_allows(service: AnalyzerService, shop: Shop) -> None:
+    asked = ["public.tenants", "legacy_imports"]  # unqualified names resolve when unique
+
+    run = service.run(shop.id, analyzers=["inventory"], collections=asked, exact_counts=True)
+
+    sizes = measured(service, run.id)
+    assert set(sizes) == {"public.tenants", STALE}
+    assert {r.qualified for r in run.scope["inventory"]} == {"public.tenants", STALE}
+    expected = truth(shop)
+    for name, s in sizes.items():
+        assert (s.row_count_method, s.row_count) == ("exact", expected[name]["rows"])
+        assert "exact_count" not in s.skipped
+    assert not [o for o in service.run_observations(run.id) if o.severity == "info"], (
+        "a targeted Run ranks no sizes"
+    )
+
+
+def test_exact_counts_the_gate_refuses_are_skipped_with_the_reason(
+    service: AnalyzerService, shop: Shop
+) -> None:
+    gate = GateLimits(max_scan_rows=1_000)  # tenants (20 rows) passes, events does not
+    service.add_connection(shop.connection.name, "DBX_TEST_SHOP_DSN", gate=gate)
+
+    run = service.run(
+        shop.id, ["inventory"], collections=["public.tenants", "public.events"], exact_counts=True
+    )
+
+    sizes = measured(service, run.id)
+    assert sizes["public.tenants"].row_count_method == "exact"
+    events = sizes["public.events"]
+    assert events.row_count_method == "estimate"
+    assert "scan rows" in events.skipped["exact_count"]
+    assert run.status == "complete"  # the table was measured; only its count was skipped
+
+
+def test_unknown_collections_are_refused_by_name(service: AnalyzerService, shop: Shop) -> None:
+    with pytest.raises(UnknownCollections) as e:
+        service.run(shop.id, ["inventory"], collections=["public.nope"], exact_counts=True)
+
+    assert e.value.names == ["public.nope"]
+
+
+def tenants(shop: Shop) -> int:
+    with psycopg.connect(fixture_dsn(shop.major, "postgres", GROUND_TRUTH["database"])) as conn:
+        return int(conn.execute("SELECT count(*) FROM tenants").fetchone()[0])  # type: ignore[index]

@@ -106,6 +106,7 @@ def probe(executor: SafeExecutor) -> ProbeResult:
             oldest_analyze=_dt(analyze["oldest"]),
         ),
         taken_at=datetime.now(UTC),
+        extension_schemas=ext_schema,
     )
 
 

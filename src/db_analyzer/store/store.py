@@ -18,9 +18,11 @@ from db_analyzer.core.model import (
     CollectionKind,
     CollectionRef,
     Connection,
+    DeadTupleScan,
     Finding,
     GateLimits,
     LLMRequestLog,
+    Maintenance,
     Observation,
     Observed,
     ProbeResult,
@@ -171,7 +173,7 @@ class Store:
                     run_id=run_id,
                     kind=_STORAGE_STATS,
                     subject=m.ref.qualified,
-                    data_json=json.dumps(dataclasses.asdict(m)),
+                    data_json=json.dumps(dataclasses.asdict(m), default=_iso),
                 )
                 for m in measured
             )
@@ -332,7 +334,29 @@ def _run(row: RunRow) -> Run:
 
 
 def _storage_stats(data: dict[str, Any]) -> StorageStats:
-    return StorageStats(**{**data, "ref": _ref(data["ref"])})
+    m, scan = data.get("maintenance"), data.get("dead_tuple_scan")
+    return StorageStats(
+        **{
+            **data,
+            "ref": _ref(data["ref"]),
+            "maintenance": None if m is None else _maintenance(m),
+            "dead_tuple_scan": None if scan is None else DeadTupleScan(**scan),
+        }
+    )
+
+
+def _maintenance(data: dict[str, Any]) -> Maintenance:
+    at = {k: datetime.fromisoformat(data[k]) if data[k] else None for k in _MAINTENANCE_TIMES}
+    return Maintenance(**{**data, **at})
+
+
+_MAINTENANCE_TIMES = ("last_vacuum", "last_analyze")
+
+
+def _iso(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
 def _finding(row: FindingRow) -> Finding:

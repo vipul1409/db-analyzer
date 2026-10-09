@@ -68,6 +68,7 @@ class ProbeResult:
     settings: dict[str, str | None]
     stats: StatsFreshness
     taken_at: datetime
+    extension_schemas: dict[str, str] = field(default_factory=dict)  # extension -> its schema
 
 
 class Capability(StrEnum):
@@ -76,6 +77,7 @@ class Capability(StrEnum):
 
     PROBE = "probe"
     STORAGE_STATS = "storage_stats"
+    EXACT_COUNTS = "exact_counts"  # count(*) per table, where the EXPLAIN gate allows
     READONLY_SQL = "readonly_sql"  # ad-hoc SQL under the agent guard profile and privacy filter
 
 
@@ -116,8 +118,33 @@ RowCountMethod = Literal["exact", "estimate", "sample"]
 
 
 @dataclass(frozen=True)
+class Maintenance:
+    """Activity counters and vacuum/analyze recency of one collection (a partitioned table sums
+    its leaf partitions and takes the oldest timestamp; None if any leaf never had it)."""
+
+    live_rows: int  # the store's running count of live rows, kept between analyzes
+    dead_rows: int
+    modified_since_analyze: int
+    last_vacuum: datetime | None  # manual or automatic, whichever is later
+    last_analyze: datetime | None
+    autovacuum_disabled: bool
+
+
+@dataclass(frozen=True)
+class DeadTupleScan:
+    """A dead-tuple measurement that reads the table (pgstattuple_approx), not the counters."""
+
+    live_rows: int
+    dead_rows: int
+    dead_percent: float  # of the table's bytes
+    free_percent: float
+
+
+@dataclass(frozen=True)
 class StorageStats:
-    """Size of one collection. `row_count` is None when the store has no estimate yet."""
+    """Size of one collection. `row_count` is None when the store has no estimate yet.
+    `skipped` names measurements planned for this collection but not taken, with the reason
+    (e.g. an exact count the EXPLAIN gate refused); the collection itself was measured."""
 
     ref: CollectionRef
     row_count: int | None
@@ -126,6 +153,10 @@ class StorageStats:
     index_bytes: int
     toast_bytes: int | None
     total_bytes: int
+    partitions: int | None = None  # leaf partitions, for a partitioned table
+    maintenance: Maintenance | None = None
+    dead_tuple_scan: DeadTupleScan | None = None
+    skipped: dict[str, str] = field(default_factory=dict)
 
 
 AnalyzerName = Literal["inventory", "workload", "index_advice", "hotspot"]
@@ -183,10 +214,11 @@ class Observed:
     evidence: dict[str, Any]
     recommendation: str | None = None
     ddl: str | None = None
+    rule: str | None = None  # when one subject can have several Findings of this category
 
     @property
     def fingerprint(self) -> str:
-        return f"{self.category}:{self.subject}"
+        return ":".join(p for p in (self.category, self.subject, self.rule) if p)
 
 
 @dataclass(frozen=True)
@@ -243,6 +275,17 @@ class AuditEntry:
     thread_id: str | None = None
     plan_cost: float | None = None  # EXPLAIN total cost, for statements the gate checked
     plan_rows: int | None = None  # EXPLAIN estimated result rows
+
+
+class UnknownCollections(Exception):
+    """Collections asked for by name that the Connection does not have."""
+
+    def __init__(self, names: list[str]) -> None:
+        super().__init__(
+            f"unknown tables: {', '.join(names)}; use schema-qualified names as "
+            "get_storage_stats returns them"
+        )
+        self.names = names
 
 
 class ConnectionRefused(Exception):

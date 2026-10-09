@@ -6,7 +6,8 @@
     "largest_table": "public.events",
     "partitioned_tables": {
       "public.usage_records": {"partition_key": "tenant_id", "partitions": "one per tenant"}
-    }
+    },
+    "schemas": {"public": 8, "reference": 1}
   },
   "findings": [
     {"fingerprint": "missing_index:public.bookings(account_id)", "why": "FK without a leading index; filtered by the workload"},
@@ -16,7 +17,8 @@
     {"fingerprint": "unused_index:public.idx_accounts_created_at", "why": "never scanned by the workload; the only one (unused excludes PK/unique, invalid, and both members of a duplicate pair: the planner may use either)"},
     {"fingerprint": "duplicate_index:public.idx_accounts_tenant_dup", "duplicate_of": "public.idx_accounts_tenant"},
     {"fingerprint": "invalid_index:public.idx_bookings_status_unique", "why": "CREATE UNIQUE INDEX CONCURRENTLY failed on duplicate values"},
-    {"fingerprint": "bloat:public.audit_log", "why": "autovacuum disabled; every row updated twice (page pruning reclaims the first versions, leaving ~1 dead per live row)", "min_dead_tuple_ratio": 0.9, "measured_by": "pgstattuple"},
+    {"fingerprint": "bloat:public.audit_log", "why": "autovacuum disabled; every row updated twice (page pruning reclaims the first versions, leaving ~1 dead per live row)", "min_dead_tuple_ratio": 0.9, "min_wasted_percent": 50, "measured_by": "pgstattuple", "note": "a later scan of the table prunes the dead tuples into free space: dead + free stays the same"},
+    {"fingerprint": "size:reference.sku_categories:index_heavy", "why": "link table: a primary key and a reversed unique index on two narrow columns outweigh the heap"},
     {"fingerprint": "stale_stats:public.legacy_imports", "why": "analyzed at 100 rows, then bulk-loaded with autovacuum disabled", "max_reltuples_ratio": 0.01},
     {"fingerprint": "hotspot:tenant:7:public.events", "rows_share": 0.35, "bytes_share": 0.5, "tolerance": 0.05},
     {"fingerprint": "hotspot:tenant:7:public.usage_records", "rows_share": 0.35, "tolerance": 0.05, "measured_by": "partition sizes"}

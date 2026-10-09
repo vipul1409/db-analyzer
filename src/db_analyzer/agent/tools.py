@@ -19,6 +19,8 @@ class TurnBackend(Protocol):
 
     def storage(self, top_n: int) -> dict[str, Any]: ...
 
+    def count_exact(self, tables: list[str], all_tables: bool) -> dict[str, Any]: ...
+
     def sql(self, sql: str, purpose: str) -> dict[str, Any]: ...
 
 
@@ -28,6 +30,16 @@ class NoArgs(BaseModel):
 
 class StorageArgs(BaseModel):
     top_n: int = Field(ge=1, le=50, description="How many collections to list, largest first")
+
+
+class CountArgs(BaseModel):
+    tables: list[str] = Field(
+        max_length=50,
+        description="Tables to count, schema-qualified as get_storage_stats names them",
+    )
+    all_tables: bool = Field(
+        description="Count every table instead of `tables` (only when the user asks for all)"
+    )
 
 
 class SqlArgs(BaseModel):
@@ -52,10 +64,26 @@ def _storage(backend: TurnBackend) -> BaseTool:
         func=lambda top_n: json.dumps(backend.storage(top_n)),
         name="get_storage_stats",
         description=(
-            "Measure every table's size (heap, index, TOAST, total) and estimated rows from the "
-            "catalog, recorded as an inventory Run. Returns the largest top_n, largest first."
+            "Analyse storage: measure every table's size (heap, index, TOAST, total), estimated "
+            "rows, vacuum/analyze recency and dead tuples, recorded as an inventory Run. Returns "
+            "ranked findings (bloat, stale statistics, index-heavy tables, oversized TOAST), "
+            "per-schema totals and the largest top_n tables, largest first."
         ),
         args_schema=StorageArgs,
+    )
+
+
+def _count(backend: TurnBackend) -> BaseTool:
+    return StructuredTool.from_function(
+        func=lambda tables, all_tables: json.dumps(backend.count_exact(tables, all_tables)),
+        name="count_rows_exact",
+        description=(
+            "Count rows exactly with count(*), only when the user wants exact counts. Each count "
+            "runs only if the EXPLAIN gate allows it; tables it refuses are listed under "
+            "`skipped` with the reason and keep their estimate. Recorded as an inventory Run "
+            "over those tables."
+        ),
+        args_schema=CountArgs,
     )
 
 
@@ -77,6 +105,7 @@ def _sql(backend: TurnBackend) -> BaseTool:
 _FACTORIES: dict[Capability, Callable[[TurnBackend], BaseTool]] = {
     Capability.PROBE: _probe,
     Capability.STORAGE_STATS: _storage,
+    Capability.EXACT_COUNTS: _count,
     Capability.READONLY_SQL: _sql,
 }
 

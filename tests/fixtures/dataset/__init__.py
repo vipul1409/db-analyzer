@@ -35,6 +35,7 @@ class Scale:
     audit: int
     legacy: int
     usage: int
+    links: int
     replay_calls: int
 
     def __post_init__(self) -> None:
@@ -53,6 +54,7 @@ SCALES = {
         audit=20_000,
         legacy=50_000,
         usage=20_000,
+        links=30_000,
         replay_calls=50,
     ),
     # Roughly 5-10 GB; for manual runs and the scale tests.
@@ -65,6 +67,7 @@ SCALES = {
         audit=4_000_000,
         legacy=5_000_000,
         usage=4_000_000,
+        links=3_000_000,
         replay_calls=200,
     ),
 }
@@ -95,6 +98,12 @@ CREATE TABLE usage_records (
   tenant_id bigint NOT NULL, id bigint NOT NULL, metric text NOT NULL,
   quantity bigint NOT NULL, at timestamptz NOT NULL, PRIMARY KEY (tenant_id, id)
 ) PARTITION BY LIST (tenant_id);
+-- A second schema, for the schema rollup. Index-heavy (seeded): a narrow link table whose
+-- primary key and reversed unique index outweigh its heap.
+CREATE SCHEMA reference;
+CREATE TABLE reference.sku_categories (
+  sku text NOT NULL, category_id int NOT NULL, PRIMARY KEY (sku, category_id),
+  UNIQUE (category_id, sku));
 """
 
 # Formatted with str.format (integers only); one multi-statement string. Row i is 1-based.
@@ -137,6 +146,9 @@ INSERT INTO usage_records
   SELECT CASE WHEN i <= {hot_usage} THEN {hot} ELSE pg_temp.cold_tenant(i) END,
          i, 'api_calls', i % 1000, now() - i * interval '1 second'
   FROM generate_series(1, {usage}) i;
+
+INSERT INTO reference.sku_categories
+  SELECT 'sku-' || (i % 997), i / 997 FROM generate_series(0, {links} - 1) i;
 """
 
 CONSTRAINTS = """
@@ -196,11 +208,13 @@ def seed(admin_dsn: str, scale: str = "ci") -> None:
         conn.execute(CONSTRAINTS)
         # Forget scans made by loading and FK validation, before the problems are seeded
         # (resetting later would also wipe their dead-tuple and last_analyze signals).
+        _flush_stats(conn)
         conn.execute("SELECT pg_stat_reset()")
         _seed_problems(conn, s)
         conn.execute(f"GRANT CONNECT ON DATABASE {DATABASE} TO db_analyzer")
-        conn.execute("GRANT USAGE ON SCHEMA public TO db_analyzer")
-        conn.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO db_analyzer")
+        for schema in ("public", "reference"):
+            conn.execute(f"GRANT USAGE ON SCHEMA {schema} TO db_analyzer")
+            conn.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO db_analyzer")
         conn.execute("SELECT pg_stat_statements_reset()")
         _replay(conn, s)
 
@@ -214,10 +228,12 @@ def _seed_problems(conn: psycopg.Connection[Any], s: Scale) -> None:
         conn.execute(
             "CREATE UNIQUE INDEX CONCURRENTLY idx_bookings_status_unique ON bookings (status)"
         )
+    _flush_stats(conn)  # so ANALYZE's live and dead counts are not added to afterwards
     # Fresh statistics everywhere except the stale-stats table, which is analyzed while tiny and
     # then bulk-loaded with autovacuum off.
     conn.execute(
-        "ANALYZE tenants, accounts, bookings, booking_items, events, audit_log, usage_records"
+        "ANALYZE tenants, accounts, bookings, booking_items, events, audit_log, usage_records,"
+        " reference.sku_categories"
     )
     conn.execute(
         "INSERT INTO legacy_imports SELECT i, 'csv', md5(i::text) FROM generate_series(1, 100) i"
@@ -227,6 +243,14 @@ def _seed_problems(conn: psycopg.Connection[Any], s: Scale) -> None:
         "INSERT INTO legacy_imports SELECT i, 'csv', md5(i::text) FROM generate_series(101, %s) i",
         (s.legacy,),
     )
+
+
+def _flush_stats(conn: psycopg.Connection[Any]) -> None:
+    """Report this backend's pending table counters now. A backend flushes them at most once a
+    second, so without this they land after a later pg_stat_reset() or ANALYZE and double the
+    live, dead and modified counts."""
+    conn.execute("SELECT pg_stat_force_next_flush()")
+    conn.execute("SELECT 1")  # the flush happens when the backend next goes idle
 
 
 def _replay(conn: psycopg.Connection[Any], s: Scale) -> None:
