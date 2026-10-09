@@ -11,6 +11,7 @@
      "ls",
      "probe",
      "read_file",
+     "run_readonly_sql",
      "write_file"
     ],
     "messages": 1,
@@ -22,26 +23,18 @@
      "content": [
       {
        "type": "function_call",
-       "name": "probe",
-       "arguments": "{}",
-       "call_id": "call_or06oe2QzQpJwHCxoY7O08kx",
-       "id": "fc_09da4859a85503fe016ac8a0d5e8b087d187c748bd1d0f93fd",
-       "index": 0
-      },
-      {
-       "type": "function_call",
        "name": "get_storage_stats",
        "arguments": "{\"top_n\":10}",
-       "call_id": "call_6bMFSZKpEw5olgtySzoPS1YU",
-       "id": "fc_09da4859a85503fe016ac8a0d5e8c487d1b7b2aefd8df61b32",
-       "index": 1
+       "call_id": "call_ymgzTNMUwBCozbgJiVvQ7Wt5",
+       "id": "fc_0a71979cfafe1264016ac8c8f3600487d188fa24e0b8b2777e",
+       "index": 0
       }
      ],
      "additional_kwargs": {},
      "response_metadata": {
       "model_provider": "openai",
-      "id": "resp_09da4859a85503fe016ac8a0d5572c87d187c0a94d7d8a0367",
-      "created_at": 1791533269.0,
+      "id": "resp_0a71979cfafe1264016ac8c8f2e6a487d193567c6f3ea7a1da",
+      "created_at": 1791543538.0,
       "metadata": {},
       "model": "gpt-5.4-mini-2026-03-17",
       "object": "response",
@@ -51,28 +44,22 @@
      },
      "type": "ai",
      "name": "db_analyzer",
-     "id": "resp_09da4859a85503fe016ac8a0d5572c87d187c0a94d7d8a0367",
+     "id": "resp_0a71979cfafe1264016ac8c8f2e6a487d193567c6f3ea7a1da",
      "tool_calls": [
-      {
-       "name": "probe",
-       "args": {},
-       "id": "call_or06oe2QzQpJwHCxoY7O08kx",
-       "type": "tool_call"
-      },
       {
        "name": "get_storage_stats",
        "args": {
         "top_n": 10
        },
-       "id": "call_6bMFSZKpEw5olgtySzoPS1YU",
+       "id": "call_ymgzTNMUwBCozbgJiVvQ7Wt5",
        "type": "tool_call"
       }
      ],
      "invalid_tool_calls": [],
      "usage_metadata": {
-      "input_tokens": 1849,
-      "output_tokens": 47,
-      "total_tokens": 1896,
+      "input_tokens": 2017,
+      "output_tokens": 20,
+      "total_tokens": 2037,
       "input_token_details": {
        "cache_creation": 0,
        "cache_read": 1536
@@ -95,9 +82,10 @@
      "ls",
      "probe",
      "read_file",
+     "run_readonly_sql",
      "write_file"
     ],
-    "messages": 4,
+    "messages": 3,
     "last": "tool"
    },
    "response": {
@@ -106,17 +94,17 @@
      "content": [
       {
        "type": "text",
-       "text": "Biggest tables by total size:\n\n| Rank | Table | Total | Heap | Index | Toast | Estimated rows |\n|---|---|---:|---:|---:|---:|---:|\n| 1 | `public.events` | 24.3 MB | 21.2 MB | 3.1 MB | 8.0 kB | 60000 |\n| 2 | `public.booking_items` | 5.2 MB | 3.9 MB | 1.3 MB | 8.0 kB | 60000 |\n| 3 | `public.audit_log` | 4.8 MB | 3.9 MB | 896.0 kB | 8.0 kB | 20000 |\n| 4 | `public.legacy_imports` | 4.8 MB | 3.7 MB | 1.1 MB | 8.0 kB | 100 |\n| 5 | `public.usage_records` | 3.2 MB | 2.0 MB | 992.0 kB | 160.0 kB | 20000 |\n| 6 | `public.bookings` | 2.7 MB | 2.2 MB | 456.0 kB | 8.0 kB | 20000 |\n\n`estimated_rows` are planner estimates, not exact counts. The clear largest table is `public.events`, at 24.3 MB, far ahead of the rest.",
+       "text": "Biggest tables by total size:\n\n| Rank | Table | Total size | Heap | Index | Est. rows |\n|---|---|---:|---:|---:|---:|\n| 1 | `public.events` | 24.3 MB | 21.2 MB | 3.1 MB | 60,000 |\n| 2 | `public.booking_items` | 5.2 MB | 3.9 MB | 1.3 MB | 60,000 |\n| 3 | `public.audit_log` | 4.8 MB | 3.9 MB | 896.0 kB | 20,000 |\n| 4 | `public.legacy_imports` | 4.8 MB | 3.7 MB | 1.1 MB | 100 |\n| 5 | `public.usage_records` | 3.2 MB | 2.0 MB | 992.0 kB | 20,000 |\n\nThese row counts are planner estimates, and the database has 8 measured collections totaling 45.4 MB.",
        "phase": "final_answer",
        "index": 0,
-       "id": "msg_09da4859a85503fe016ac8a0d6eb2087d1b8a40b44457aee58"
+       "id": "msg_0a71979cfafe1264016ac8c8f49a1c87d1a9e6e0b30376da18"
       }
      ],
      "additional_kwargs": {},
      "response_metadata": {
       "model_provider": "openai",
-      "id": "resp_09da4859a85503fe016ac8a0d67a5087d19d33e769549405e8",
-      "created_at": 1791533270.0,
+      "id": "resp_0a71979cfafe1264016ac8c8f41e8887d1a67ef076df5e403b",
+      "created_at": 1791543540.0,
       "metadata": {},
       "model": "gpt-5.4-mini-2026-03-17",
       "object": "response",
@@ -126,13 +114,13 @@
      },
      "type": "ai",
      "name": "db_analyzer",
-     "id": "resp_09da4859a85503fe016ac8a0d67a5087d19d33e769549405e8",
+     "id": "resp_0a71979cfafe1264016ac8c8f41e8887d1a67ef076df5e403b",
      "tool_calls": [],
      "invalid_tool_calls": [],
      "usage_metadata": {
-      "input_tokens": 2757,
-      "output_tokens": 319,
-      "total_tokens": 3076,
+      "input_tokens": 2785,
+      "output_tokens": 233,
+      "total_tokens": 3018,
       "input_token_details": {
        "cache_creation": 0,
        "cache_read": 1536

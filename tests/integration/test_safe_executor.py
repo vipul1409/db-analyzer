@@ -8,15 +8,18 @@ from db_analyzer.adapters.postgres.queries import LIBRARY
 from db_analyzer.adapters.postgres.session import open_session
 from db_analyzer.core.model import (
     AuditEntry,
+    EntityKey,
     GateLimits,
     GateRejected,
+    PrivacyRejected,
     QueryCapReached,
     QueryRejected,
     SessionLimits,
 )
+from db_analyzer.safety import privacy
 from db_analyzer.safety.executor import QueryBudget, SafeExecutor
 
-from .conftest import SUPPORTED, dsn
+from .conftest import SUPPORTED, dsn, seeded_dsn
 
 pytestmark = pytest.mark.integration
 
@@ -153,3 +156,57 @@ def test_query_cap_stops_with_a_structured_reason(session: psycopg.Connection[An
     assert e.value.limit == 2
     assert e.value.reason == "query cap reached: 2 statements this turn"
     assert [a.decision for a in audit] == ["executed", "executed", "rejected"]
+
+
+@pytest.fixture(params=SUPPORTED)
+def shop(request: pytest.FixtureRequest) -> Iterator[psycopg.Connection[Any]]:
+    with open_session(seeded_dsn(request.param), SessionLimits()) as conn:
+        yield conn
+
+
+def test_row_data_the_llm_asks_for_is_rejected_before_it_runs_and_audited(
+    shop: psycopg.Connection[Any],
+) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(shop, "c1", audit=audit.append)
+    sql = "SELECT email FROM accounts ORDER BY id LIMIT 3"
+
+    with pytest.raises(PrivacyRejected, match="email"):
+        executor.execute_agent(sql, purpose="agent")
+
+    assert [(a.sql, a.decision, a.plan_cost) for a in audit] == [(sql, "rejected", None)]
+    assert audit[0].reason and "email" in audit[0].reason
+
+
+def test_aggregate_sql_from_the_llm_runs(shop: psycopg.Connection[Any]) -> None:
+    executor = SafeExecutor(shop, "c1", audit=lambda _: None)
+
+    rows = executor.execute_agent(
+        "SELECT count(*) AS pending FROM bookings WHERE status = 'pending'", purpose="agent"
+    )
+
+    assert rows == [{"pending": 2_000}]
+
+
+def test_sampled_values_reach_the_llm_only_for_entity_keys(shop: psycopg.Connection[Any]) -> None:
+    key = EntityKey("public", "events", "tenant_id")
+    executor = SafeExecutor(shop, "c1", audit=lambda _: None, entity_keys=frozenset({key}))
+
+    rows = executor.execute_agent(
+        """SELECT schemaname, tablename, attname, most_common_vals FROM pg_stats
+           WHERE schemaname = 'public' AND attname = 'tenant_id'
+             AND tablename IN ('events', 'accounts')""",
+        purpose="agent",
+    )
+
+    shown = {r["tablename"]: r["most_common_vals"] for r in rows}
+    assert "7" in str(shown["events"])
+    assert shown["accounts"] == privacy.WITHHELD
+
+
+def test_vetted_sql_is_not_subject_to_the_llm_output_check(
+    shop: psycopg.Connection[Any],
+) -> None:
+    executor = SafeExecutor(shop, "c1", audit=lambda _: None)
+
+    assert executor.execute("SELECT email FROM accounts ORDER BY id LIMIT 1", purpose="test")

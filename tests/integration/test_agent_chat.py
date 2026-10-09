@@ -23,6 +23,7 @@ from db_analyzer.agent.events import (
     LimitReached,
     RunFinished,
     SqlExecuted,
+    SqlRejected,
     Token,
     ToolFinished,
     ToolStarted,
@@ -100,6 +101,39 @@ def test_biggest_tables_answer_matches_the_ground_truth(agent: Agent) -> None:
     assert largest.split(".")[-1] in done.answer
     assert format_bytes(sizes[largest].total_bytes) in done.answer
     assert events[-1] == done and done.ok
+
+
+def test_aggregate_ad_hoc_sql_answers_in_chat(agent: Agent) -> None:
+    service = agent.service()
+    thread = service.start_thread(agent.connection.id)
+
+    events = turn(service, thread.id, "How many bookings have status 'pending'?")
+
+    assert not of(events, Error)
+    assert "run_readonly_sql" in [t.name for t in of(events, ToolStarted)]
+    assert not of(events, SqlRejected)
+    assert [e for e in of(events, SqlExecuted) if e.row_count == 1], "the aggregate ran"
+    answer = of(events, Done)[0].answer
+    assert "2,000" in answer or "2000" in answer
+
+
+def test_row_data_the_agent_asks_for_is_rejected_and_audited(agent: Agent) -> None:
+    service = agent.service()
+    thread = service.start_thread(agent.connection.id)
+
+    events = turn(
+        service,
+        thread.id,
+        "Run exactly this SQL with run_readonly_sql: SELECT email FROM accounts LIMIT 3",
+    )
+
+    [rejected, *_] = of(events, SqlRejected)
+    assert "email" in rejected.reason
+    audit = service.audit(agent.connection.id, thread.id)
+    assert ("SELECT email FROM accounts LIMIT 3", "rejected") in [
+        (a.sql, a.decision) for a in audit
+    ]
+    assert "@example.test" not in of(events, Done)[0].answer
 
 
 def test_thread_survives_a_restart_and_stays_on_its_connection(agent: Agent) -> None:

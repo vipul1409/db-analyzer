@@ -1,0 +1,317 @@
+{
+ "calls": [
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "run_readonly_sql",
+     "write_file"
+    ],
+    "messages": 1,
+    "last": "human"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "function_call",
+       "name": "grep",
+       "arguments": "{\"pattern\":\"pending\",\"path\":null,\"glob\":\"*.sql\",\"output_mode\":\"files_with_matches\",\"max_count\":20}",
+       "call_id": "call_MxTqtTMN50k9ZEYptcLFh4FS",
+       "id": "fc_011c84d52cd4f8a3016ac8c8e8369887d1b20f6fb202204ae4",
+       "index": 0
+      },
+      {
+       "type": "function_call",
+       "name": "probe",
+       "arguments": "{}",
+       "call_id": "call_m6hYU709WuUcRmAqzIYL7xpD",
+       "id": "fc_011c84d52cd4f8a3016ac8c8e836ac87d19e9a82326edce1fb",
+       "index": 1
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_011c84d52cd4f8a3016ac8c8e7509c87d1a86d24c609a95a94",
+      "created_at": 1791543527.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_011c84d52cd4f8a3016ac8c8e7509c87d1a86d24c609a95a94",
+     "tool_calls": [
+      {
+       "name": "grep",
+       "args": {
+        "pattern": "pending",
+        "path": null,
+        "glob": "*.sql",
+        "output_mode": "files_with_matches",
+        "max_count": 20
+       },
+       "id": "call_MxTqtTMN50k9ZEYptcLFh4FS",
+       "type": "tool_call"
+      },
+      {
+       "name": "probe",
+       "args": {},
+       "id": "call_m6hYU709WuUcRmAqzIYL7xpD",
+       "type": "tool_call"
+      }
+     ],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 2019,
+      "output_tokens": 67,
+      "total_tokens": 2086,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 1536
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "run_readonly_sql",
+     "write_file"
+    ],
+    "messages": 4,
+    "last": "tool"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "function_call",
+       "name": "get_storage_stats",
+       "arguments": "{\"top_n\":20}",
+       "call_id": "call_vZnGxWZeF8FLAt9xxjn8JDn4",
+       "id": "fc_011c84d52cd4f8a3016ac8c8e9c37887d190952b36a1e2cc2c",
+       "index": 0
+      },
+      {
+       "type": "function_call",
+       "name": "grep",
+       "arguments": "{\"pattern\":\"booking\",\"path\":null,\"glob\":\"*.sql\",\"output_mode\":\"files_with_matches\",\"max_count\":50}",
+       "call_id": "call_RxoSmq1UFmfCKvMfTjDTEQjr",
+       "id": "fc_011c84d52cd4f8a3016ac8c8e9c38c87d1900fc5ec54052de7",
+       "index": 1
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_011c84d52cd4f8a3016ac8c8e8b62487d18ea59501d32c3bb1",
+      "created_at": 1791543528.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_011c84d52cd4f8a3016ac8c8e8b62487d18ea59501d32c3bb1",
+     "tool_calls": [
+      {
+       "name": "get_storage_stats",
+       "args": {
+        "top_n": 20
+       },
+       "id": "call_vZnGxWZeF8FLAt9xxjn8JDn4",
+       "type": "tool_call"
+      },
+      {
+       "name": "grep",
+       "args": {
+        "pattern": "booking",
+        "path": null,
+        "glob": "*.sql",
+        "output_mode": "files_with_matches",
+        "max_count": 50
+       },
+       "id": "call_RxoSmq1UFmfCKvMfTjDTEQjr",
+       "type": "tool_call"
+      }
+     ],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 2215,
+      "output_tokens": 71,
+      "total_tokens": 2286,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 1536
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "run_readonly_sql",
+     "write_file"
+    ],
+    "messages": 7,
+    "last": "tool"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "function_call",
+       "name": "run_readonly_sql",
+       "arguments": "{\"sql\":\"SELECT count(*) AS pending_bookings FROM public.bookings WHERE status = 'pending';\",\"purpose\":\"Count bookings with pending status\"}",
+       "call_id": "call_im3eq3jv4r4hIeU6jKwZPjIg",
+       "id": "fc_011c84d52cd4f8a3016ac8c8ea957087d1bd75bc4736b4feff",
+       "index": 0
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_011c84d52cd4f8a3016ac8c8ea3ce087d1a95c1e2071118ff3",
+      "created_at": 1791543530.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_011c84d52cd4f8a3016ac8c8ea3ce087d1a95c1e2071118ff3",
+     "tool_calls": [
+      {
+       "name": "run_readonly_sql",
+       "args": {
+        "sql": "SELECT count(*) AS pending_bookings FROM public.bookings WHERE status = 'pending';",
+        "purpose": "Count bookings with pending status"
+       },
+       "id": "call_im3eq3jv4r4hIeU6jKwZPjIg",
+       "type": "tool_call"
+      }
+     ],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 3048,
+      "output_tokens": 44,
+      "total_tokens": 3092,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 2048
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "tools": [
+     "delete",
+     "edit_file",
+     "get_storage_stats",
+     "glob",
+     "grep",
+     "ls",
+     "probe",
+     "read_file",
+     "run_readonly_sql",
+     "write_file"
+    ],
+    "messages": 9,
+    "last": "tool"
+   },
+   "response": {
+    "type": "ai",
+    "data": {
+     "content": [
+      {
+       "type": "text",
+       "text": "| status | count |\n|---|---:|\n| pending | 2,000 |\n\nThere are 2,000 bookings with status `pending`.",
+       "phase": "final_answer",
+       "index": 0,
+       "id": "msg_011c84d52cd4f8a3016ac8c8eba92887d189eb76207129ce25"
+      }
+     ],
+     "additional_kwargs": {},
+     "response_metadata": {
+      "model_provider": "openai",
+      "id": "resp_011c84d52cd4f8a3016ac8c8eb487887d1b3d57bfee058e11f",
+      "created_at": 1791543531.0,
+      "metadata": {},
+      "model": "gpt-5.4-mini-2026-03-17",
+      "object": "response",
+      "service_tier": "default",
+      "status": "completed",
+      "model_name": "gpt-5.4-mini-2026-03-17"
+     },
+     "type": "ai",
+     "name": "db_analyzer",
+     "id": "resp_011c84d52cd4f8a3016ac8c8eb487887d1b3d57bfee058e11f",
+     "tool_calls": [],
+     "invalid_tool_calls": [],
+     "usage_metadata": {
+      "input_tokens": 3127,
+      "output_tokens": 35,
+      "total_tokens": 3162,
+      "input_token_details": {
+       "cache_creation": 0,
+       "cache_read": 2560
+      },
+      "output_token_details": {
+       "reasoning": 0
+      }
+     }
+    }
+   }
+  }
+ ]
+}

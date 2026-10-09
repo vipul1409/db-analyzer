@@ -9,12 +9,13 @@ Create the read-only login with `docs/setup/postgres_role.sql` (Azure notes in `
 ```sh
 export DBX_DSN='postgresql://db_analyzer:<secret>@host:5432/app'
 uv run dbx connect prod                     # probe the database and show what the analyzer can see
+uv run dbx connect prod --alias-identifiers # optional: the LLM sees schema/table/column names as aliases
 uv run dbx analyze prod --report out.md     # inventory Run (no LLM): tables by size, estimated rows
 uv run --env-file .env dbx chat prod        # chat with the agent (needs OPENAI_API_KEY)
 uv run --env-file .env dbx chat prod --thread <id>   # resume a conversation, even after a restart
 ```
 
-`dbx chat` streams the answer and shows each tool call and every SQL statement as it runs. Each conversation is a Thread bound to one Connection; the agent's model is `DBX_MODEL` (default `gpt-5.4-mini`). A turn stops cleanly at 200k tokens or 60 tool calls.
+`dbx chat` streams the answer and shows each tool call and every SQL statement as it runs. Beyond its dedicated tools, the agent may write its own read-only SQL; any statement whose output could carry row values (`SELECT email …`) is rejected before it runs, so the LLM sees only metadata, aggregates and entity keys. With `--alias-identifiers`, names reach the LLM only as aliases (`table_3`) and `dbx chat` shows the real ones. Each conversation is a Thread bound to one Connection; the agent's model is `DBX_MODEL` (default `gpt-5.4-mini`). A turn stops cleanly at 200k tokens or 60 tool calls.
 
 Each `analyze` is recorded as a Run, with its Findings, in the local store. A Finding seen again in a later Run gains an Observation instead of being duplicated. Every SQL statement passes the guard (read-only allowlist) and, unless it reads only the catalog, the EXPLAIN gate (cost and row limits), and is written to the audit log.
 
@@ -55,7 +56,7 @@ Start a subset of fixtures with `make db-up PG="pg15 pg16"` and point the integr
 
 ### Safety suites
 
-`tests/safety/corpus.py` lists about 270 statements the analyzer must never run. `make check` asserts the guard rejects all of them; `make test-integration` runs the ones the read-only role should also refuse, with the guard bypassed (ADR 0004).
+`tests/safety/corpus.py` lists about 270 statements the analyzer must never run. `make check` asserts the guard rejects all of them; `make test-integration` runs the ones the read-only role should also refuse, with the guard bypassed (ADR 0004). The same file lists read-only statements whose output carries row data: the guard accepts them, and `make check` asserts the privacy filter rejects them (ADR 0006).
 
 The guard's function allowlist is built from `src/db_analyzer/safety/pg_catalog.json`, a snapshot of PG 15–18. When adding a Postgres version, start its fixture and regenerate it with `uv run python -m tests.fixtures.catalog_snapshot`; an integration test fails while it is out of date.
 

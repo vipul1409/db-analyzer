@@ -2,8 +2,9 @@
 
 - `make_model`: OpenAI via LangChain's `init_chat_model`, Responses API, no data retention
   (`store=False`), request timeout and retries with exponential backoff from the SDK.
-- `LLMGateway`: the only path to the model. Caps concurrent calls, writes a redacted request
-  log, totals usage per turn, and records or replays cassettes so tests run offline.
+- `LLMGateway`: the only path to the model. Re-applies the privacy filter to everything bound
+  for it, caps concurrent calls, writes a redacted request log, totals usage per turn, and
+  records or replays cassettes so tests run offline.
 - `StrictTools`: forces strict JSON schemas on every tool bind (ADR 0003).
 - `TurnLimits`: ends a turn cleanly at the token or tool-call limit.
 """
@@ -37,6 +38,8 @@ from langgraph.types import Command
 
 from db_analyzer.agent.events import TURN_LIMIT, LimitKind, Usage
 from db_analyzer.core.model import LLMRequestLog
+from db_analyzer.safety import privacy
+from db_analyzer.safety.aliases import Aliases
 
 DEFAULT_MODEL = "gpt-5.4-mini"
 
@@ -58,6 +61,10 @@ def estimate_cost(model: str, input_tokens: int, cached: int, output_tokens: int
 
 class LLMConfigError(Exception):
     """The model cannot be used as configured (e.g. no API key)."""
+
+
+class PrivacyViolation(Exception):
+    """A request bound for the model carries personal data: it is not sent."""
 
 
 @dataclass(frozen=True)
@@ -183,16 +190,26 @@ class _Totals:
 
 
 class LLMGateway(AgentMiddleware[Any, Any, Any]):
-    """One instance per turn; share it with subagents so they share its concurrency cap."""
+    """One instance per turn; share it with subagents so they share its concurrency cap.
+
+    Defence in depth for the privacy filter (proposal §3.5): a tool result that carries
+    personal data is replaced by an error before it enters the conversation, and a request
+    whose tool results still carry any is refused. The user's own messages are not checked:
+    what the user types is theirs to send.
+
+    With `aliases`, the model sees identifiers only as aliases, in tool results and in the
+    user's messages alike, and tools get its arguments back with real names."""
 
     def __init__(
         self,
         settings: LLMSettings,
         log: Callable[[LLMRequestLog], None] | None = None,
         cassette: Cassette | None = None,
+        aliases: Aliases | None = None,
     ):
         super().__init__()
         self._settings = settings
+        self._aliases = aliases
         self._log = log
         self.cassette = cassette  # set before the first model call
         self._async_slots = asyncio.Semaphore(settings.max_concurrency)
@@ -203,6 +220,7 @@ class LLMGateway(AgentMiddleware[Any, Any, Any]):
     def wrap_model_call(
         self, request: ModelRequest[Any], handler: Callable[[ModelRequest[Any]], Any]
     ) -> Any:
+        request = self._outgoing(request)
         started = time.perf_counter()
         with self._slots:
             response = self._replayed(request) or handler(request)
@@ -213,11 +231,38 @@ class LLMGateway(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[Any]],
     ) -> Any:
+        request = self._outgoing(request)
         started = time.perf_counter()
         async with self._async_slots:
             response = self._replayed(request) or await handler(request)
         # The request log and cassette are file and SQLite writes: keep them off the loop.
         return await asyncio.to_thread(self._after, request, response, started)
+
+    def wrap_tool_call(
+        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Any]
+    ) -> ToolMessage | Command[Any]:
+        return _withhold_personal_data(handler(self._incoming(request)))
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[Any]]
+    ) -> ToolMessage | Command[Any]:
+        return _withhold_personal_data(await handler(self._incoming(request)))
+
+    def _outgoing(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
+        _refuse_personal_data(request.messages)
+        if self._aliases is None:
+            return request
+        aliases = self._aliases
+        hidden: list[Any] = [_hide(m, aliases) for m in request.messages]
+        return request.override(messages=hidden)
+
+    def _incoming(self, request: ToolCallRequest) -> ToolCallRequest:
+        if self._aliases is None:
+            return request
+        call = request.tool_call
+        return request.override(
+            tool_call={**call, "args": self._aliases.unalias_args(call["args"])}
+        )
 
     def usage(self) -> Usage:
         t = self._totals
@@ -270,6 +315,40 @@ class LLMGateway(AgentMiddleware[Any, Any, Any]):
                     output_tokens=u["output_tokens"],
                     cost_usd=cost,
                 )
+            )
+
+
+def _withhold_personal_data(result: ToolMessage | Command[Any]) -> ToolMessage | Command[Any]:
+    if not isinstance(result, ToolMessage):
+        return result
+    if found := privacy.find_personal_data(result.text):
+        return ToolMessage(
+            content=f"Withheld by the privacy filter: the result contained {', '.join(found)}.",
+            tool_call_id=result.tool_call_id,
+            name=result.name,
+            status="error",
+        )
+    return result
+
+
+def _hide(message: BaseMessage, aliases: Aliases) -> BaseMessage:
+    """The message as the model may see it. Its own replies are already in aliases."""
+    if not isinstance(message, HumanMessage | ToolMessage):
+        return message
+    if isinstance(message.content, str):
+        return message.model_copy(update={"content": aliases.alias_content(message.content)})
+    blocks = [
+        {**b, "text": aliases.alias(b["text"])} if isinstance(b, dict) and "text" in b else b
+        for b in message.content
+    ]
+    return message.model_copy(update={"content": blocks})
+
+
+def _refuse_personal_data(messages: Sequence[BaseMessage]) -> None:
+    for m in messages:
+        if isinstance(m, ToolMessage) and (found := privacy.find_personal_data(m.text)):
+            raise PrivacyViolation(
+                f"not sent: a result of tool {m.name!r} contains {', '.join(found)}"
             )
 
 

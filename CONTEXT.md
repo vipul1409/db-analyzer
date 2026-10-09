@@ -81,3 +81,11 @@ _Avoid_: Cost check, complexity filter
 **Query cap**:
 The most statements the agent may send to the database in one Turn; reaching it ends the Turn's database work with a stated reason, as a guard against runaway loops.
 _Avoid_: Rate limit, quota
+
+**Privacy filter**:
+The rules that keep row contents away from the LLM: it may see metadata, aggregates and entity keys only. SQL the agent writes is refused if any of its output could be a row value, and everything bound for the LLM is checked once more on the way out.
+_Avoid_: Redaction, masking, PII filter
+
+**Identifier alias**:
+A stable stand-in (`table_3`) for a schema, table or column name, used when a Connection is set to hide its names from the LLM. The user always sees the real name.
+_Avoid_: Redacted name, pseudonym

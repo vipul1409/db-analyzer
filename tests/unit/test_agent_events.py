@@ -12,6 +12,7 @@ from db_analyzer.agent.events import (
     ToolStarted,
     Translator,
 )
+from db_analyzer.safety.aliases import Aliases
 
 
 def messages(msg: Any, node: str = "model") -> tuple[str, Any]:
@@ -103,3 +104,21 @@ def test_answer_is_the_text_after_the_last_tool_call() -> None:
     t.translate(*messages(AIMessageChunk(content="public.events", id="m2")))
 
     assert t.answer == "public.events"
+
+
+def test_aliases_are_shown_as_real_names_even_split_across_chunks() -> None:
+    t = Translator(Aliases({"public": "schema_1", "events": "table_1"}))
+    call = {"name": "run_readonly_sql", "args": {"sql": "SELECT 1 FROM table_1"}, "id": "c1"}
+
+    events = [
+        *t.translate(*updates(AIMessage(content="", tool_calls=[call]))),
+        *t.translate(*messages(AIMessageChunk(content="Biggest: schema_1.tab", id="m1"))),
+        *t.translate(*messages(AIMessageChunk(content="le_1", id="m1"))),
+        *t.flush(),
+    ]
+
+    assert events[0] == ToolStarted(
+        call_id="c1", name="run_readonly_sql", args={"sql": "SELECT 1 FROM events"}
+    )
+    assert "".join(e.text for e in events if isinstance(e, Token)) == "Biggest: public.events"
+    assert t.answer == "Biggest: public.events"

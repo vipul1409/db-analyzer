@@ -5,12 +5,14 @@ events. Tools emit SQL and Run events themselves through LangGraph's stream writ
 dicts of these same models.
 """
 
+import re
 from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from pydantic import BaseModel, Field, TypeAdapter
 
 from db_analyzer.core.model import AuditEntry
+from db_analyzer.safety.aliases import Aliases
 
 # Name of the AIMessage the turn-limit middleware adds when it ends a turn.
 TURN_LIMIT = "turn_limit"
@@ -138,13 +140,60 @@ def from_audit(entry: AuditEntry) -> SqlExecuted | SqlRejected:
 SUMMARY_CHARS = 200
 
 
-class Translator:
-    """Stateful: collects the answer text across one turn."""
+_TRAILING_WORD = re.compile(r"[A-Za-z0-9_$]*$")
 
-    def __init__(self) -> None:
+
+class Translator:
+    """Stateful: collects the answer text across one turn. With `aliases`, the model's
+    identifier aliases are shown as real names; a token's trailing word is held back until the
+    next chunk, since an alias may be split across chunks. Call `flush` at the end."""
+
+    def __init__(self, aliases: Aliases | None = None) -> None:
         self.answer = ""
+        self._aliases = aliases
+        self._pending = ""
 
     def translate(self, mode: str, chunk: Any) -> list[AgentEvent]:
+        events = self._translate(mode, chunk)
+        if self._aliases is None:
+            return events
+        out: list[AgentEvent] = []
+        for e in events:
+            if isinstance(e, Token):
+                out += self._hold(e.text)
+            else:
+                out += self.flush()
+                if isinstance(e, ToolStarted):
+                    self.answer = ""  # the flushed text was a preamble too
+                out.append(self._unalias(e, self._aliases))
+        return out
+
+    def flush(self) -> list[AgentEvent]:
+        text, self._pending = self._pending, ""
+        return self._emit(text)
+
+    def _hold(self, text: str) -> list[AgentEvent]:
+        self._pending += text
+        cut = _TRAILING_WORD.search(self._pending)
+        start = cut.start() if cut else len(self._pending)
+        ready, self._pending = self._pending[:start], self._pending[start:]
+        return self._emit(ready)
+
+    def _emit(self, aliased: str) -> list[AgentEvent]:
+        if not aliased or self._aliases is None:
+            return []
+        text = self._aliases.unalias(aliased)
+        self.answer += text
+        return [Token(text=text)]
+
+    def _unalias(self, event: AgentEvent, aliases: Aliases) -> AgentEvent:
+        if isinstance(event, ToolStarted):
+            return event.model_copy(update={"args": aliases.unalias_args(event.args)})
+        if isinstance(event, ToolFinished):
+            return event.model_copy(update={"summary": aliases.unalias(event.summary)})
+        return event
+
+    def _translate(self, mode: str, chunk: Any) -> list[AgentEvent]:
         if mode == "messages":
             msg, meta = chunk
             if meta.get("langgraph_node") != "model":
@@ -163,7 +212,8 @@ class Translator:
         if not isinstance(msg, AIMessage | AIMessageChunk) or msg.name == TURN_LIMIT:
             return []
         if text := msg.text:
-            self.answer += text
+            if self._aliases is None:
+                self.answer += text
             return [Token(text=text)]
         return []
 

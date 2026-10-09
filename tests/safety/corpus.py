@@ -334,3 +334,55 @@ CORPUS: list[Forbidden] = (
     + FUNCTIONS
     + ACCEPTED_BY_DATABASE
 )
+
+
+# Row data in the output of SQL the LLM wrote. The guard accepts these (they only read); the
+# privacy filter must reject them before they run (test_privacy_corpus.py). No column here is
+# a confirmed entity key.
+ROW_DATA_OUTPUTS: list[str] = [
+    "SELECT avg(amount) FROM bookings GROUP BY id",
+    "SELECT sum(ascii(substr(email, 1, 1))) FROM accounts GROUP BY id",
+    "SELECT sum(amount) FROM bookings WHERE id = 7",
+    "SELECT stddev(amount + 0) FROM bookings GROUP BY id",
+    "SELECT bool_or(email = 'user5@example.test') FROM accounts",
+    "SELECT sum(CASE WHEN id = 7 THEN amount END) FROM bookings",
+    "SELECT sum(length(notes) + amount) FROM bookings GROUP BY id",
+    "SELECT query FROM pg_stat_statements",
+    "SELECT *, count(*) OVER () FROM accounts",
+    "SELECT a.* FROM accounts a",
+    "SELECT row_to_json(a) FROM accounts a",
+    "SELECT min(email) FROM accounts",
+    "SELECT max(created_at) FROM accounts",
+    "SELECT mode() WITHIN GROUP (ORDER BY email) FROM accounts",
+    "SELECT string_agg(email, ',') FROM accounts",
+    "SELECT array_agg(tenant_id) FROM events",
+    "SELECT sum(amount) OVER (ORDER BY id) FROM bookings",
+    "SELECT lag(email) OVER () FROM accounts",
+    "SELECT CASE WHEN email LIKE 'a%' THEN 1 ELSE 0 END FROM accounts",
+    "SELECT length(email) FROM accounts",
+    "SELECT (SELECT email FROM accounts LIMIT 1)",
+    "SELECT ARRAY(SELECT email FROM accounts)",
+    "SELECT x FROM (SELECT email AS x FROM accounts) s",
+    "WITH c AS (SELECT email FROM accounts) SELECT * FROM c",
+    "WITH c(x) AS (SELECT email FROM accounts) SELECT x FROM c",
+    "SELECT 1 AS n UNION ALL SELECT id FROM accounts",
+    "SELECT key FROM events e, jsonb_each(e.payload)",
+    "SELECT j.key FROM events e CROSS JOIN LATERAL jsonb_each(e.payload) j",
+    "SELECT tenant_id FROM events JOIN audit_log USING (tenant_id)",
+    "SELECT (SELECT email FROM pg_class LIMIT 1) FROM accounts",
+    "SELECT relname, email FROM pg_class, accounts",
+    "SELECT query FROM pg_stat_activity",
+    "SELECT * FROM pg_stat_activity",
+    "SELECT pg_stat_get_backend_activity(1)",
+    "SELECT * FROM pg_stat_get_activity(NULL)",
+    "SELECT most_common_vals FROM pg_stats_ext",
+    "SELECT s.mcv FROM pg_stats AS s(a, b, c, d, e, f, g, h, mcv)",
+    "SELECT most_common_vals::text FROM pg_stats",
+    "SELECT v FROM pg_stats, unnest(most_common_vals::text::text[]) v",
+    "SELECT x FROM (SELECT schemaname, tablename, attname, most_common_vals AS x FROM pg_stats) s",
+    "SELECT most_common_vals FROM pg_stats",
+    "SELECT schemaname, tablename, attname, most_common_vals FROM pg_stats "
+    "JOIN pg_class ON relname = tablename",
+    "SELECT schemaname, tablename, attname, most_common_vals, 'x' AS attname FROM pg_stats",
+    "SELECT tenant_id FROM events",  # not a confirmed entity key here
+]

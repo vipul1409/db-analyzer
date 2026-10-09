@@ -1,9 +1,10 @@
 """SafeExecutor: the only path from analyzer code to the database.
 
-query cap → guard → read-only transaction (always rolled back) → EXPLAIN gate (unless the guard
-exempts the statement) → execute → audit. The guard profile follows from the method called:
-`execute` for vetted templates and workload text, `execute_agent` for SQL the LLM wrote. The
-result filter is added in a later ticket.
+query cap → guard → privacy check (LLM SQL) → read-only transaction (always rolled back) →
+EXPLAIN gate (unless the guard exempts the statement) → execute → result filter → audit. The
+guard profile follows from the method called: `execute` for vetted templates and workload text,
+`execute_agent` for SQL the LLM wrote. Only LLM SQL passes the privacy filter here; templates
+pass on their declared columns only (adapters/sql_common/templates.py).
 """
 
 import threading
@@ -18,13 +19,14 @@ from psycopg.rows import dict_row
 from db_analyzer.core.model import (
     AuditDecision,
     AuditEntry,
+    EntityKey,
     GateLimits,
     PlanMetrics,
     QueryCapReached,
     QueryRejected,
 )
 from db_analyzer.safety import gate as explain_gate
-from db_analyzer.safety import guard
+from db_analyzer.safety import guard, privacy
 
 Row = dict[str, Any]
 AuditSink = Callable[[AuditEntry], None]
@@ -61,6 +63,7 @@ class SafeExecutor:
         gate: GateLimits | None = None,
         budget: QueryBudget | None = None,
         thread_id: str | None = None,
+        entity_keys: frozenset[EntityKey] = frozenset(),
     ):
         self._conn = conn
         self._connection_id = connection_id
@@ -68,6 +71,12 @@ class SafeExecutor:
         self._gate = gate or GateLimits()
         self._budget = budget
         self._thread_id = thread_id
+        self._entity_keys = entity_keys
+
+    @property
+    def server_version_num(self) -> int:
+        """From the connection handshake: no statement is run."""
+        return self._conn.info.server_version
 
     def execute(self, sql: str, purpose: str) -> list[Row]:
         """Run vetted SQL (templates, verbatim workload text) under the internal profile."""
@@ -82,6 +91,11 @@ class SafeExecutor:
             if self._budget is not None:
                 self._budget.spend()
             checked = guard.check(sql, profile)
+            output = (
+                privacy.check_output(sql, self._entity_keys)
+                if profile == "agent"
+                else privacy.OutputFilter()
+            )
         except QueryRejected as e:
             self._record(sql, purpose, "rejected", e.reason)
             raise
@@ -101,7 +115,7 @@ class SafeExecutor:
                         raise QueryRejected("EXPLAIN returned no plan")
                     plan = explain_gate.check(explained["QUERY PLAN"], self._gate)
                 cur.execute(sql.encode())
-                rows = cur.fetchall() if cur.description else []
+                rows = output.apply(cur.fetchall() if cur.description else [])
         except QueryRejected as e:
             self._record(sql, purpose, "rejected", e.reason)
             raise

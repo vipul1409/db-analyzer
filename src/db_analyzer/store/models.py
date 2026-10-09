@@ -2,7 +2,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -19,6 +29,7 @@ class ConnectionRow(Base):
     dsn_env: Mapped[str] = mapped_column(String)
     limits_json: Mapped[str] = mapped_column(Text)
     gate_json: Mapped[str] = mapped_column(Text, default="{}")
+    alias_identifiers: Mapped[bool] = mapped_column(Boolean, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -127,3 +138,15 @@ class LLMRequestRow(Base):
     cached_tokens: Mapped[int] = mapped_column(Integer)
     output_tokens: Mapped[int] = mapped_column(Integer)
     cost_usd: Mapped[float | None] = mapped_column(Float)
+
+
+class AliasRow(Base):
+    """Stable aliases for identifiers the LLM must not see (Connection.alias_identifiers). Kept
+    locally: they are what maps the model's answers back to real names."""
+
+    __tablename__ = "identifier_aliases"
+    __table_args__ = (UniqueConstraint("connection_id", "alias"),)
+
+    connection_id: Mapped[str] = mapped_column(ForeignKey("connections.id"), primary_key=True)
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    alias: Mapped[str] = mapped_column(String)

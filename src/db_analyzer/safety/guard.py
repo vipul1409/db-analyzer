@@ -116,7 +116,7 @@ def _check_select(stmt: ast.SelectStmt) -> _SelectFacts:
     checker(stmt)
     catalog_only = (
         not checker.recursive
-        and all(_is_catalog_relation(r) for r in _relations(stmt, frozenset()))
+        and all(is_catalog_relation(r) for r in _relations(stmt, frozenset()))
         and checker.row_sources <= fn.CATALOG_ROW_SOURCES
         and not (checker.functions & fn.READS_RELATION_DATA)
         and checker.functions & fn.SET_RETURNING <= fn.CATALOG_ROW_SOURCES
@@ -137,14 +137,14 @@ def _relations(node: Any, ctes: frozenset[str]) -> Iterator[ast.RangeVar]:
         names = [c.ctename for c in with_.ctes or () if c.ctename]
         for i, cte in enumerate(with_.ctes or ()):
             yield from _relations(cte.ctequery, ctes | set(names if with_.recursive else names[:i]))
-        for child in _children(node, skip="withClause"):
+        for child in children(node, skip="withClause"):
             yield from _relations(child, ctes | set(names))
         return
-    for child in _children(node):
+    for child in children(node):
         yield from _relations(child, ctes)
 
 
-def _is_catalog_relation(r: ast.RangeVar) -> bool:
+def is_catalog_relation(r: ast.RangeVar) -> bool:
     if r.relname in fn.EXTENSION_RELATIONS:
         return True
     if r.schemaname is None:
@@ -152,7 +152,7 @@ def _is_catalog_relation(r: ast.RangeVar) -> bool:
     return r.schemaname in fn.CATALOG_SCHEMAS
 
 
-def _children(node: ast.Node, skip: str | None = None) -> Iterator[ast.Node]:
+def children(node: ast.Node, skip: str | None = None) -> Iterator[ast.Node]:
     slots: dict[str, Any] = type(node).__slots__  # type: ignore[attr-defined]
     for slot in slots:
         if slot != skip:

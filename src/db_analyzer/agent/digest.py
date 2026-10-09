@@ -1,12 +1,14 @@
 """Compact, pre-digested tool results (proposal §6.2): ranked, units normalized, small."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from db_analyzer.core.model import ProbeResult, Run, StorageStats
 from db_analyzer.core.units import format_bytes
 
 UNREADABLE_SHOWN = 10
+SQL_ROWS_SHOWN = 50
 
 
 def probe(p: ProbeResult) -> dict[str, Any]:
@@ -47,6 +49,25 @@ def storage(run: Run, measured: list[StorageStats], top_n: int) -> dict[str, Any
         ],
         "row_counts": "planner estimates (pg_class.reltuples); null = never analyzed",
     }
+
+
+def sql_result(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Rows as columns plus value lists; numbers stay numbers, anything else becomes text."""
+    columns = list(rows[0]) if rows else []
+    return {
+        "columns": columns,
+        "rows": [[_json_value(r[c]) for c in columns] for r in rows[:SQL_ROWS_SHOWN]],
+        "row_count": len(rows),
+        **({"rows_shown": SQL_ROWS_SHOWN} if len(rows) > SQL_ROWS_SHOWN else {}),
+    }
+
+
+def _json_value(value: Any) -> Any:
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
 
 
 def _hours_ago(at: datetime | None) -> float | None:

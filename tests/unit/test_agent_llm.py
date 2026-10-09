@@ -4,7 +4,7 @@ from typing import Any, cast
 import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from db_analyzer.agent.events import TURN_LIMIT
@@ -14,10 +14,12 @@ from db_analyzer.agent.llm import (
     CassetteMismatch,
     LLMGateway,
     LLMSettings,
+    PrivacyViolation,
     TurnLimits,
     redact,
 )
 from db_analyzer.core.model import LLMRequestLog
+from db_analyzer.safety.aliases import Aliases
 
 
 class Fake(GenericFakeChatModel):
@@ -137,3 +139,74 @@ def test_turn_within_limits_is_untouched() -> None:
     messages = run(Fake(messages=iter([call(), ANSWER])), TurnLimits(10_000, 10))
 
     assert messages[-1].text == "public.events is the biggest"
+
+
+@tool
+def leaky(top_n: int) -> str:
+    """A tool with a bug: it returns row data."""
+    return '{"accounts": [{"email": "user5@example.test"}]}'
+
+
+def test_gateway_withholds_a_tool_result_that_carries_row_data() -> None:
+    log: list[LLMRequestLog] = []
+    gateway = LLMGateway(LLMSettings(), log=log.append)
+    agent = create_agent(
+        Fake(messages=iter([call_tool("leaky"), ANSWER])), tools=[leaky], middleware=[gateway]
+    )
+
+    messages = agent.invoke(cast(Any, {"messages": [("user", "biggest tables?")]}))["messages"]
+
+    [result] = [m for m in messages if isinstance(m, ToolMessage)]
+    assert result.status == "error" and "privacy" in str(result.content)
+    assert not any("user5@example.test" in str(m.content) for m in messages)
+    assert not any("user5@example.test" in entry.request for entry in log)
+
+
+def test_gateway_refuses_to_send_row_data_already_in_the_conversation() -> None:
+    gateway = LLMGateway(LLMSettings())
+    agent = create_agent(Exploding(messages=iter([])), tools=[sizes], middleware=[gateway])
+    history = [
+        HumanMessage("which account is busiest?"),
+        call_tool("sizes"),
+        ToolMessage('{"email": "user5@example.test"}', tool_call_id="c0", name="sizes"),
+        HumanMessage("and the next one?"),
+    ]
+
+    with pytest.raises(PrivacyViolation, match="email address"):
+        agent.invoke(cast(Any, {"messages": history}))
+
+
+def call_tool(name: str) -> AIMessage:
+    return AIMessage(content="", tool_calls=[{"name": name, "args": {"top_n": 1}, "id": "c0"}])
+
+
+def test_gateway_shows_the_model_aliases_and_gives_tools_real_names() -> None:
+    seen: list[str] = []
+
+    @tool
+    def count_rows(table: str) -> str:
+        """Rows in one table."""
+        seen.append(table)
+        return '{"table": "public.events", "rows": 60000}'
+
+    log: list[LLMRequestLog] = []
+    gateway = LLMGateway(
+        LLMSettings(),
+        log=log.append,
+        aliases=Aliases({"public": "schema_1", "events": "table_1"}),
+    )
+    hidden_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "count_rows", "args": {"table": "schema_1.table_1"}, "id": "c0"}],
+    )
+    agent = create_agent(
+        Fake(messages=iter([hidden_call, ANSWER])), tools=[count_rows], middleware=[gateway]
+    )
+
+    agent.invoke(cast(Any, {"messages": [("user", "how many rows in events?")]}))
+
+    assert seen == ["public.events"]
+    sent = "\n".join(entry.request for entry in log)
+    assert "how many rows in table_1?" in sent
+    assert "schema_1.table_1" in sent
+    assert "events" not in sent

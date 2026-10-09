@@ -18,7 +18,10 @@ You analyse one PostgreSQL database for an engineer, through read-only tools.
 - Every number in your answer comes from a tool result in this conversation. Never estimate.
 - Quote sizes exactly as the tool's *_pretty fields give them.
 - Row counts from get_storage_stats are planner estimates: say so.
-- If a tool returns an error, say what failed; do not fill the gap yourself.
+- Prefer the dedicated tools. Use run_readonly_sql only for what they do not answer; it
+  returns aggregates, catalog metadata and entity keys, never row values.
+- If a tool returns an error, say what failed; do not fill the gap yourself. A rejected query
+  may be retried once in a form the error allows.
 - Answer briefly: a ranked list or a small table, then one line of interpretation.
 """
 

@@ -1,5 +1,6 @@
 """AnalyzerService: the single entry point for the CLI, LangGraph Studio, the API and tests."""
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -17,7 +18,9 @@ from db_analyzer import report
 from db_analyzer.adapters import postgres as pg
 from db_analyzer.adapters.postgres import inventory as pg_inventory
 from db_analyzer.adapters.postgres import probe as pg_probe
+from db_analyzer.adapters.postgres.queries import LIBRARY
 from db_analyzer.adapters.postgres.session import open_session
+from db_analyzer.adapters.sql_common.templates import run_template
 from db_analyzer.agent import digest
 from db_analyzer.agent.events import (
     AgentEvent,
@@ -60,7 +63,8 @@ from db_analyzer.core.model import (
     StorageStats,
     Thread,
 )
-from db_analyzer.safety.executor import QueryBudget, SafeExecutor
+from db_analyzer.safety.aliases import Aliases, assign
+from db_analyzer.safety.executor import QueryBudget, Row, SafeExecutor
 from db_analyzer.store.store import Store
 
 SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
@@ -83,11 +87,15 @@ class AnalyzerService:
         dsn_env: str,
         limits: SessionLimits | None = None,
         gate: GateLimits | None = None,
+        alias_identifiers: bool | None = None,
     ) -> Connection:
         """Add a Connection, or update the one with this name. `dsn_env` names the env var
-        holding the DSN; the DSN itself is never stored. Omitting `limits` or `gate` keeps the
-        Connection's existing safety limits."""
-        return self._store.upsert_connection(name, "postgres", dsn_env, limits, gate)
+        holding the DSN; the DSN itself is never stored. With `alias_identifiers`, the LLM sees
+        schema, table and column names only as aliases. Omitting `limits`, `gate` or
+        `alias_identifiers` keeps the Connection's existing setting."""
+        return self._store.upsert_connection(
+            name, "postgres", dsn_env, limits, gate, alias_identifiers
+        )
 
     def connection(self, name: str) -> Connection:
         return self._store.find_connection(name)
@@ -135,6 +143,21 @@ class AnalyzerService:
         return self._store.finish_run(
             run.id, "complete", scope={"inventory": [m.ref for m in measured]}, skipped={}
         )
+
+    def run_sql(
+        self,
+        connection_id: str,
+        sql: str,
+        purpose: str,
+        thread_id: str | None = None,
+        budget: QueryBudget | None = None,
+        on_sql: SqlObserver | None = None,
+    ) -> list[Row]:
+        """Run SQL the LLM wrote: agent guard profile, EXPLAIN gate and privacy filter. Not a
+        Run: nothing is measured or recorded beyond the audit log."""
+        connection = self._store.get_connection(connection_id)
+        with self._executor(connection, thread_id, budget, on_sql) as executor:
+            return executor.execute_agent(sql, purpose)
 
     def runs(self, connection_id: str) -> list[Run]:
         return self._store.runs(connection_id)
@@ -191,14 +214,20 @@ class AnalyzerService:
         """One Turn: stream the agent's events for `message`, ending with Usage and Done."""
         thread = self._store.get_thread(thread_id)
         settings = self._llm
-        translator = Translator()
-        config: Any = {"configurable": {"thread_id": thread.id}}
         failed = False
+        try:
+            aliases = await asyncio.to_thread(self._aliases, thread)
+        except (QueryRejected, ConnectionRefused, psycopg.Error) as e:
+            yield Error(message=f"cannot list identifiers to alias: {e}")
+            yield Done(thread_id=thread.id, answer="", ok=False)
+            return
+        translator = Translator(aliases)
+        config: Any = {"configurable": {"thread_id": thread.id}}
         async with (
             AsyncSqliteSaver.from_conn_string(str(self._home / "checkpoints.sqlite")) as cp,
             httpx.AsyncClient(timeout=settings.request_timeout_s) as http,
         ):
-            agent, gateway = self._agent(thread, AgentTurn(self, thread), cp, http)
+            agent, gateway = self._agent(thread, AgentTurn(self, thread), cp, http, aliases)
             gateway.cassette = _cassette(settings, await _turns_so_far(agent, config))
             try:
                 async for mode, chunk in agent.astream(
@@ -213,6 +242,8 @@ class AnalyzerService:
             except Exception as e:  # the Turn ends; the Thread stays usable
                 failed = True
                 yield Error(message=f"{type(e).__name__}: {e}")
+        for event in translator.flush():
+            yield event
         yield gateway.usage()
         yield Done(thread_id=thread.id, answer=translator.answer, ok=not failed)
 
@@ -221,7 +252,9 @@ class AnalyzerService:
         Studio server session records the SQL audit and model requests."""
         thread = self.start_thread(self.connection(connection_name).id)
         turn = AgentTurn(self, thread)
-        agent, _ = self._agent(thread, turn, None, None, extra=[NewTurn(turn)])
+        agent, _ = self._agent(
+            thread, turn, None, None, self._aliases(thread), extra=[NewTurn(turn)]
+        )
         return agent
 
     def _agent(
@@ -230,10 +263,15 @@ class AnalyzerService:
         turn: "AgentTurn",
         checkpointer: Any,
         http: httpx.AsyncClient | None,
+        aliases: Aliases | None,
         extra: Sequence[Any] = (),
     ) -> tuple[Any, LLMGateway]:
         settings = self._llm
-        gateway = LLMGateway(settings, log=lambda entry: self.record_llm_request(thread.id, entry))
+        gateway = LLMGateway(
+            settings,
+            log=lambda entry: self.record_llm_request(thread.id, entry),
+            aliases=aliases,
+        )
         middleware = [
             *extra,
             TurnLimits(settings.max_tokens_per_turn, settings.max_tool_calls_per_turn),
@@ -242,6 +280,20 @@ class AnalyzerService:
         ]
         tools = build_tools(turn, self.capabilities(thread.connection_id))
         return build_agent(make_model(settings, http), tools, middleware, checkpointer), gateway
+
+    def _aliases(self, thread: Thread) -> Aliases | None:
+        """The Connection's identifier aliases, extended to names added since the last Turn,
+        or None when it does not alias identifiers."""
+        connection = self._store.get_connection(thread.connection_id)
+        if not connection.alias_identifiers:
+            return None
+        with self._executor(connection, thread.id) as executor:
+            version = executor.server_version_num
+            rows = run_template(executor, LIBRARY.get("identifiers", version), "aliases")
+        known = self._store.aliases(connection.id)
+        new = assign(known, [(str(r["kind"]), str(r["name"])) for r in rows])
+        self._store.add_aliases(connection.id, new)
+        return Aliases({**known, **new})
 
     @contextmanager
     def _executor(
@@ -261,6 +313,7 @@ class AnalyzerService:
                 on_sql(entry)
 
         with open_session(dsn, connection.limits) as conn:
+            # No column is a confirmed entity key until entity maps exist.
             yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
 
 
@@ -300,6 +353,20 @@ class AgentTurn:
             return digest.storage(run, self._service.storage(run.id), top_n)
 
         return self._guarded(measure)
+
+    def sql(self, sql: str, purpose: str) -> dict[str, Any]:
+        return self._guarded(
+            lambda emit: digest.sql_result(
+                self._service.run_sql(
+                    self._thread.connection_id,
+                    sql,
+                    purpose,
+                    self._thread.id,
+                    self._budget,
+                    _sql_events(emit),
+                )
+            )
+        )
 
     def _guarded(self, work: Callable[[Callable[[Any], None]], dict[str, Any]]) -> dict[str, Any]:
         emit = get_stream_writer()

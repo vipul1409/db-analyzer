@@ -31,6 +31,7 @@ from db_analyzer.core.model import (
     Thread,
 )
 from db_analyzer.store.models import (
+    AliasRow,
     AuditRow,
     ConnectionRow,
     FindingRow,
@@ -72,9 +73,10 @@ class Store:
         dsn_env: str,
         limits: SessionLimits | None,
         gate: GateLimits | None,
+        alias_identifiers: bool | None = None,
     ) -> Connection:
-        """Create or update by name. `limits=None` / `gate=None` keep the existing limits
-        (defaults if new)."""
+        """Create or update by name. `None` for `limits`, `gate` or `alias_identifiers` keeps
+        the existing setting (the default if new)."""
         with Session(self._engine) as s, s.begin():
             row = s.scalars(select(ConnectionRow).where(ConnectionRow.name == name)).first()
             if row is None:
@@ -86,6 +88,8 @@ class Store:
                 row.limits_json = json.dumps(dataclasses.asdict(limits or SessionLimits()))
             if gate is not None or row.gate_json is None:
                 row.gate_json = json.dumps(dataclasses.asdict(gate or GateLimits()))
+            if alias_identifiers is not None or row.alias_identifiers is None:
+                row.alias_identifiers = bool(alias_identifiers)
             return _connection(row)
 
     def find_connection(self, name: str) -> Connection:
@@ -101,6 +105,17 @@ class Store:
             if row is None:
                 raise KeyError(f"unknown connection {connection_id}")
             return _connection(row)
+
+    def aliases(self, connection_id: str) -> dict[str, str]:
+        q = select(AliasRow).where(AliasRow.connection_id == connection_id)
+        with Session(self._engine) as s:
+            return {r.name: r.alias for r in s.scalars(q)}
+
+    def add_aliases(self, connection_id: str, aliases: dict[str, str]) -> None:
+        with Session(self._engine) as s, s.begin():
+            s.add_all(
+                AliasRow(connection_id=connection_id, name=n, alias=a) for n, a in aliases.items()
+            )
 
     def save_probe(self, connection_id: str, result: ProbeResult) -> None:
         with Session(self._engine) as s, s.begin():
@@ -283,6 +298,7 @@ def _connection(row: ConnectionRow) -> Connection:
         dsn_env=row.dsn_env,
         limits=SessionLimits(**json.loads(row.limits_json)),
         gate=GateLimits(**json.loads(row.gate_json)),
+        alias_identifiers=row.alias_identifiers,
     )
 
 

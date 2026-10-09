@@ -36,13 +36,25 @@ def connect(
     dsn_env: Annotated[
         str, typer.Option(help="Environment variable holding the DSN. The DSN is never stored.")
     ] = "DBX_DSN",
+    alias_identifiers: Annotated[
+        bool | None,
+        typer.Option(
+            "--alias-identifiers/--no-alias-identifiers",
+            help="Show schema, table and column names to the LLM only as aliases. "
+            "Omitted: keep the current setting (off for a new Connection).",
+        ),
+    ] = None,
 ) -> None:
     """Add (or update) a Connection to one database and show what the analyzer can see."""
     service = AnalyzerService()
-    connection = service.add_connection(name=name, dsn_env=dsn_env)
+    connection = service.add_connection(
+        name=name, dsn_env=dsn_env, alias_identifiers=alias_identifiers
+    )
     with _database_errors("Probe failed"):
         probe = service.probe(connection.id)
     _render_probe(name, probe)
+    if connection.alias_identifiers:
+        console.print("[dim]The LLM sees schema, table and column names only as aliases.[/]")
 
 
 @app.command()

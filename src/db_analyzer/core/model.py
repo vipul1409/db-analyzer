@@ -36,6 +36,7 @@ class Connection:
     dsn_env: str
     limits: SessionLimits = field(default_factory=SessionLimits)
     gate: GateLimits = field(default_factory=GateLimits)
+    alias_identifiers: bool = False  # the LLM sees schema, table and column names as aliases
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,16 @@ class Capability(StrEnum):
 
     PROBE = "probe"
     STORAGE_STATS = "storage_stats"
+    READONLY_SQL = "readonly_sql"  # ad-hoc SQL under the agent guard profile and privacy filter
+
+
+@dataclass(frozen=True)
+class EntityKey:
+    """A column that identifies an entity type in one table, e.g. public.bookings.tenant_id."""
+
+    schema: str
+    table: str
+    column: str
 
 
 class CollectionKind(StrEnum):
@@ -244,6 +255,10 @@ class QueryRejected(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class PrivacyRejected(QueryRejected):
+    """The privacy filter refused SQL the LLM wrote: an output would carry row data."""
 
 
 GateMetric = Literal["total_cost", "result_rows", "scan_rows"]
