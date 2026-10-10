@@ -6,6 +6,7 @@ import pytest
 
 from db_analyzer import runs
 from db_analyzer.analyzers import workload
+from db_analyzer.analyzers.plan_rules import PlanContext
 from db_analyzer.core.model import (
     CollectionKind,
     CollectionRef,
@@ -151,14 +152,15 @@ class FakeSource:
 
 
 def collect(*sources: FakeSource, window: timedelta = timedelta(hours=1)) -> Collected:
-    # Readable sources never touch the executor; only the schema-only review does.
+    # Readable sources never touch the executor, and planning is left out: only the schema-only
+    # review and the planner do.
     context = RunContext(
         cast(SafeExecutor, None),
         probe(),
         GateLimits(),
         RunOptions(min_stats_window=window),
     )
-    return runs_workload.measure(context, sources)
+    return runs_workload.measure(context, sources, planner=lambda *_: ({}, PlanContext({})))
 
 
 def test_the_first_readable_source_is_ranked() -> None:

@@ -248,6 +248,80 @@ class WorkloadReport:
 
 
 @dataclass(frozen=True)
+class PlanNode:
+    """One node of a normalized plan: the planner's estimates for it, never measured values (a
+    generic plan executes nothing). `relation` and `index` are schema-qualified. `condition` is
+    the part an index or join resolves (Index Cond, Recheck Cond, Hash/Merge Cond), `filter` the
+    part checked row by row afterwards (Filter, Join Filter). `filter_columns` names the columns
+    of `relation` the filter reads."""
+
+    node_type: str
+    rows: int  # estimated rows per execution of the node
+    width: int  # estimated bytes per row
+    total_cost: float
+    relation: str | None = None
+    index: str | None = None
+    join_type: str | None = None
+    strategy: str | None = None  # an aggregate's or set operation's: Plain, Sorted, Hashed, Mixed
+    condition: str | None = None
+    filter: str | None = None
+    filter_columns: list[str] = field(default_factory=list)
+    sort_key: list[str] = field(default_factory=list)
+    children: list["PlanNode"] = field(default_factory=list)
+
+    def walk(self) -> "list[PlanNode]":
+        """This node and every node below it, depth first."""
+        return [self, *(n for c in self.children for n in c.walk())]
+
+    def line(self) -> str:
+        """One line of EXPLAIN-like text for this node alone."""
+        on = f" on {self.relation}" if self.relation else ""
+        using = f" using {self.index}" if self.index else ""
+        head = f"{self.join_type} " if self.join_type and self.join_type != "Inner" else ""
+        text = f"{head}{self.node_type}{using}{on} (rows={self.rows:,} width={self.width})"
+        if self.condition:
+            text += f" cond: {self.condition}"
+        if self.filter:
+            text += f" filter: {self.filter}"
+        if self.sort_key:
+            text += f" key: {', '.join(self.sort_key)}"
+        return text
+
+    def text(self, depth: int = 0) -> list[str]:
+        """The tree as indented lines, one per node."""
+        return ["  " * depth + self.line(), *(t for c in self.children for t in c.text(depth + 1))]
+
+
+@dataclass(frozen=True)
+class RelationEstimate:
+    """What the planner knows about one collection, or one partition of it (plans scan
+    partitions), for judging the estimates in a plan."""
+
+    name: str  # schema-qualified
+    estimated_rows: int | None  # the stored estimate; None when never analyzed or vacuumed
+    live_rows: int  # the running count of live rows
+    modified_since_analyze: int
+    analyzed: bool
+
+    @property
+    def rows(self) -> int:
+        """Best guess at its size now: the stored estimate lags bulk loads, the live count
+        restarts at a statistics reset."""
+        return max(self.estimated_rows or 0, self.live_rows)
+
+
+@dataclass(frozen=True)
+class StatementPlan:
+    """The generic plan of one workload statement, or why there is none. `row_lookup_only` when
+    the statement is DML planned as the SELECT that finds its rows (ADR 0002): the plan leaves out
+    the write itself, triggers and index maintenance."""
+
+    plan: PlanNode | None
+    row_lookup_only: bool = False
+    skipped: str | None = None
+
+
+@dataclass(frozen=True)
 class UnindexedForeignKey:
     """A foreign key whose columns no index starts with: deleting or updating a referenced row
     scans the whole table."""

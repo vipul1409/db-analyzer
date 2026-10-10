@@ -1,0 +1,33 @@
+{
+ "node_type": "Limit",
+ "rows": 857,
+ "width": 24,
+ "total_cost": 1238.73,
+ "relation": null,
+ "index": null,
+ "join_type": null,
+ "strategy": null,
+ "condition": null,
+ "filter": null,
+ "filter_columns": [],
+ "sort_key": [],
+ "children": [
+  {
+   "node_type": "Index Scan",
+   "rows": 8571,
+   "width": 24,
+   "total_cost": 12385.04,
+   "relation": "public.events",
+   "index": "public.idx_events_tenant_created",
+   "join_type": null,
+   "strategy": null,
+   "condition": null,
+   "filter": "(events.kind = $1)",
+   "filter_columns": [
+    "kind"
+   ],
+   "sort_key": [],
+   "children": []
+  }
+ ]
+}

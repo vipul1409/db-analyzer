@@ -210,3 +210,74 @@ def test_vetted_sql_is_not_subject_to_the_llm_output_check(
     executor = SafeExecutor(shop, "c1", audit=lambda _: None)
 
     assert executor.execute("SELECT email FROM accounts ORDER BY id LIMIT 1", purpose="test")
+
+
+def test_a_sequence_runs_in_one_read_only_transaction(session: psycopg.Connection[Any]) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+
+    [row] = executor.execute_sequence(
+        [
+            "SET LOCAL plan_cache_mode = force_generic_plan",
+            "SELECT current_setting('plan_cache_mode') AS mode,"
+            " current_setting('transaction_read_only') AS read_only",
+        ],
+        purpose="test",
+    )
+
+    assert row == {"mode": "force_generic_plan", "read_only": "on"}
+    assert [e.decision for e in audit] == ["executed", "executed"]
+    [after] = executor.execute("SELECT current_setting('plan_cache_mode') AS mode", "test")
+    assert after["mode"] == "auto"  # SET LOCAL ended with the transaction
+
+
+def test_a_sequence_runs_its_cleanup_even_when_a_statement_fails(
+    session: psycopg.Connection[Any],
+) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+
+    with pytest.raises(psycopg.Error):
+        executor.execute_sequence(
+            ["PREPARE dbx_t AS SELECT 1 FROM pg_class", "SELECT 1 / 0 AS x"],
+            purpose="test",
+            cleanup="DEALLOCATE dbx_t",
+        )
+
+    assert [e.decision for e in audit] == ["executed", "failed", "executed"]
+    assert audit[-1].sql == "DEALLOCATE dbx_t"
+    # A prepared statement outlives the rollback: only the cleanup removed it.
+    [left] = executor.execute(
+        "SELECT count(*) AS n FROM pg_prepared_statements WHERE name = 'dbx_t'", "test"
+    )
+    assert left["n"] == 0
+
+
+def test_a_sequence_refuses_every_statement_before_running_any(
+    session: psycopg.Connection[Any],
+) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+
+    with pytest.raises(QueryRejected):
+        executor.execute_sequence(
+            ["PREPARE dbx_u AS SELECT 1 FROM pg_class", "DELETE FROM private.notes"],
+            purpose="test",
+        )
+
+    assert [e.decision for e in audit] == ["rejected"]
+    assert audit[0].sql == "DELETE FROM private.notes"
+
+
+def test_a_failing_cleanup_does_not_hide_the_sequences_own_error(
+    session: psycopg.Connection[Any],
+) -> None:
+    audit: list[AuditEntry] = []
+    executor = SafeExecutor(session, "c1", audit=audit.append)
+
+    with pytest.raises(psycopg.errors.DivisionByZero):
+        executor.execute_sequence(
+            ["SELECT 1 / 0 AS x"], purpose="test", cleanup="DEALLOCATE dbx_never_prepared"
+        )
+
+    assert [e.decision for e in audit] == ["failed", "failed"]

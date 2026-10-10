@@ -1,0 +1,33 @@
+{
+ "node_type": "Aggregate",
+ "rows": 1,
+ "width": 32,
+ "total_cost": 1250.04,
+ "relation": null,
+ "index": null,
+ "join_type": null,
+ "strategy": "Plain",
+ "condition": null,
+ "filter": null,
+ "filter_columns": [],
+ "sort_key": [],
+ "children": [
+  {
+   "node_type": "Seq Scan",
+   "rows": 3,
+   "width": 10,
+   "total_cost": 1250.0,
+   "relation": "public.booking_items",
+   "index": null,
+   "join_type": null,
+   "strategy": null,
+   "condition": null,
+   "filter": "(booking_items.booking_id = $1)",
+   "filter_columns": [
+    "booking_id"
+   ],
+   "sort_key": [],
+   "children": []
+  }
+ ]
+}

@@ -1,0 +1,39 @@
+{
+ "Node Type": "Aggregate",
+ "Strategy": "Plain",
+ "Partial Mode": "Simple",
+ "Parallel Aware": false,
+ "Async Capable": false,
+ "Startup Cost": 1250.03,
+ "Total Cost": 1250.04,
+ "Plan Rows": 1,
+ "Plan Width": 32,
+ "Disabled": false,
+ "Output": [
+  "sum(((qty)::numeric * price))"
+ ],
+ "Plans": [
+  {
+   "Node Type": "Seq Scan",
+   "Parent Relationship": "Outer",
+   "Parallel Aware": false,
+   "Async Capable": false,
+   "Relation Name": "booking_items",
+   "Schema": "public",
+   "Alias": "booking_items",
+   "Startup Cost": 0.0,
+   "Total Cost": 1250.0,
+   "Plan Rows": 3,
+   "Plan Width": 10,
+   "Disabled": false,
+   "Output": [
+    "id",
+    "booking_id",
+    "sku",
+    "qty",
+    "price"
+   ],
+   "Filter": "(booking_items.booking_id = $1)"
+  }
+ ]
+}

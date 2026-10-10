@@ -1,0 +1,65 @@
+{
+ "node_type": "Aggregate",
+ "rows": 1,
+ "width": 8,
+ "total_cost": 9042.81,
+ "relation": null,
+ "index": null,
+ "join_type": null,
+ "strategy": "Plain",
+ "condition": null,
+ "filter": null,
+ "filter_columns": [],
+ "sort_key": [],
+ "children": [
+  {
+   "node_type": "Limit",
+   "rows": 54000,
+   "width": 32,
+   "total_cost": 8367.8,
+   "relation": null,
+   "index": null,
+   "join_type": null,
+   "strategy": null,
+   "condition": null,
+   "filter": null,
+   "filter_columns": [],
+   "sort_key": [],
+   "children": [
+    {
+     "node_type": "Sort",
+     "rows": 60000,
+     "width": 32,
+     "total_cost": 8367.8,
+     "relation": null,
+     "index": null,
+     "join_type": null,
+     "strategy": null,
+     "condition": null,
+     "filter": null,
+     "filter_columns": [],
+     "sort_key": [
+      "((events.payload ->> $1))"
+     ],
+     "children": [
+      {
+       "node_type": "Seq Scan",
+       "rows": 60000,
+       "width": 32,
+       "total_cost": 3456.0,
+       "relation": "public.events",
+       "index": null,
+       "join_type": null,
+       "strategy": null,
+       "condition": null,
+       "filter": null,
+       "filter_columns": [],
+       "sort_key": [],
+       "children": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,12 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
 from db_analyzer.adapters.postgres import workload as pg_workload
-from db_analyzer.analyzers import workload
+from db_analyzer.analyzers import plan_rules, workload
 from db_analyzer.core.model import (
     CollectionKind,
     CollectionRef,
     Observed,
+    PlanNode,
+    RelationEstimate,
     ScanActivity,
+    StatementPlan,
     UnindexedForeignKey,
     WorkloadReport,
     WorkloadStatement,
@@ -183,6 +186,63 @@ def test_a_statement_that_spills_to_disk_gets_advice() -> None:
         f"slow_query:{workload.fingerprint(sql)}"
     ]
 
+    assert "10.0 MB of temporary files" in (f.recommendation or "")
+
+
+SEQ_SCAN = PlanNode(
+    "Seq Scan",
+    rows=10,
+    width=19,
+    total_cost=542.17,
+    relation="public.bookings",
+    filter="(bookings.account_id = $1)",
+    filter_columns=["account_id"],
+)
+SHOP = plan_rules.PlanContext(
+    relations={"public.bookings": RelationEstimate("public.bookings", 20_000, 20_000, 0, True)}
+)
+
+
+def planned(sql: str, plan: StatementPlan, **kw: int) -> Observed:
+    r = rank(statement(sql, **kw))
+    found = workload.analyze(r, {workload.fingerprint(sql): plan}, SHOP)
+    return {o.fingerprint: o for o in found}[f"slow_query:{workload.fingerprint(sql)}"]
+
+
+def test_a_planned_statement_says_why_it_is_slow_with_the_plan_as_evidence() -> None:
+    sql = "SELECT id FROM bookings WHERE account_id = $1"
+
+    f = planned(sql, StatementPlan(SEQ_SCAN), shared_blks_read=900)
+
+    assert f.evidence["plan"] == [SEQ_SCAN.line()]
+    [reason] = f.evidence["plan_rules"]
+    assert reason["rule"] == "seq_scan_selective_filter"
+    assert reason["node"] == SEQ_SCAN.line()
+    assert f.recommendation is not None and reason["explanation"] in f.recommendation
+    # The plan explains it: the generic hint about blocks read gives way.
+    assert "outside shared buffers" not in f.recommendation
+
+
+def test_dml_planned_as_its_row_lookup_says_the_plan_covers_only_that() -> None:
+    sql = "UPDATE bookings SET amount = amount WHERE account_id = $1"
+
+    f = planned(sql, StatementPlan(SEQ_SCAN, row_lookup_only=True))
+
+    assert f.evidence["row_lookup_only"] is True
+    assert (f.recommendation or "").startswith("The plan covers only how it finds its rows")
+
+
+def test_a_statement_that_could_not_be_planned_says_why_and_keeps_its_hints() -> None:
+    sql = "SELECT x FROM a ORDER BY y"
+
+    f = planned(
+        sql,
+        StatementPlan(None, skipped="refused: function foo is not allowed"),
+        temp_blks_written=1280,
+    )
+
+    assert f.evidence["plan_skipped"] == "refused: function foo is not allowed"
+    assert "plan" not in f.evidence
     assert "10.0 MB of temporary files" in (f.recommendation or "")
 
 

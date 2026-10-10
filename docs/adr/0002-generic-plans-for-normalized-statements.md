@@ -1,6 +1,6 @@
 # Generic plans for normalized statements: go, with DML planned as SELECT
 
-**Status:** accepted (spike #4)
+**Status:** accepted (spike #4); amended by ADR 0012 (guard profile, shape of the DML rewrite)
 
 Normalized `pg_stat_statements` text (`$n` placeholders) can be planned read-only as `db_analyzer`:
 

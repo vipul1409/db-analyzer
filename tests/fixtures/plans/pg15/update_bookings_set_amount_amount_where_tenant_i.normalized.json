@@ -1,0 +1,18 @@
+{
+ "node_type": "Seq Scan",
+ "rows": 524,
+ "width": 1,
+ "total_cost": 595.92,
+ "relation": "public.bookings",
+ "index": null,
+ "join_type": null,
+ "strategy": null,
+ "condition": null,
+ "filter": "((bookings.tenant_id = $1) AND (bookings.status = $2))",
+ "filter_columns": [
+  "tenant_id",
+  "status"
+ ],
+ "sort_key": [],
+ "children": []
+}

@@ -7,9 +7,10 @@ guard profile follows from the method called: `execute` for vetted templates and
 pass on their declared columns only (adapters/sql_common/templates.py).
 """
 
+import contextlib
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -80,13 +81,47 @@ class SafeExecutor:
 
     def execute(self, sql: str, purpose: str) -> list[Row]:
         """Run vetted SQL (templates, verbatim workload text) under the internal profile."""
-        return self._run(sql, purpose, "internal")
+        return self._run([sql], purpose, "internal")
 
     def execute_agent(self, sql: str, purpose: str) -> list[Row]:
         """Run SQL the LLM wrote, under the agent profile."""
-        return self._run(sql, purpose, "agent")
+        return self._run([sql], purpose, "agent")
 
-    def _run(self, sql: str, purpose: str, profile: guard.Profile) -> list[Row]:
+    def execute_sequence(
+        self, statements: Sequence[str], purpose: str, cleanup: str | None = None
+    ) -> list[Row]:
+        """Run vetted statements in order in one read-only transaction, under the internal
+        profile, for statements that depend on earlier ones (SET LOCAL, PREPARE). Every
+        statement passes the guard before any runs. Returns the last statement's rows.
+        `cleanup` runs afterwards on its own, whether the sequence succeeded or not: a prepared
+        statement outlives the rollback (ADR 0002). After a failure the cleanup may fail too
+        (nothing was prepared): that is audited, and the first error is the one raised."""
+        try:
+            rows = self._run(statements, purpose, "internal")
+        except BaseException:
+            if cleanup is not None:
+                with contextlib.suppress(QueryRejected, psycopg.Error):
+                    self._run([cleanup], purpose, "internal")
+            raise
+        if cleanup is not None:
+            self._run([cleanup], purpose, "internal")
+        return rows
+
+    def _run(self, statements: Sequence[str], purpose: str, profile: guard.Profile) -> list[Row]:
+        checked = [self._check(sql, purpose, profile) for sql in statements]
+        rows: list[Row] = []
+        with (
+            self._conn.transaction(force_rollback=True),
+            self._conn.cursor(row_factory=dict_row) as cur,
+        ):
+            cur.execute("SET TRANSACTION READ ONLY")
+            for sql, (kind, output) in zip(statements, checked, strict=True):
+                rows = self._statement(cur, sql, purpose, kind, output)
+        return rows
+
+    def _check(
+        self, sql: str, purpose: str, profile: guard.Profile
+    ) -> tuple[guard.Checked, privacy.OutputFilter]:
         try:
             if self._budget is not None:
                 self._budget.spend()
@@ -99,23 +134,29 @@ class SafeExecutor:
         except QueryRejected as e:
             self._record(sql, purpose, "rejected", e.reason)
             raise
+        return checked, output
+
+    def _statement(
+        self,
+        cur: psycopg.Cursor[Row],
+        sql: str,
+        purpose: str,
+        checked: guard.Checked,
+        output: privacy.OutputFilter,
+    ) -> list[Row]:
+        """One statement inside the read-only transaction: EXPLAIN gate, execute, filter."""
         plan: PlanMetrics | None = None
         started = time.perf_counter()
         try:
-            with (
-                self._conn.transaction(force_rollback=True),
-                self._conn.cursor(row_factory=dict_row) as cur,
-            ):
-                cur.execute("SET TRANSACTION READ ONLY")
-                if checked.gated:
-                    # The guard has accepted exactly one SELECT, so wrapping it is safe.
-                    cur.execute(b"EXPLAIN (FORMAT JSON, COSTS ON) " + sql.encode())
-                    explained = cur.fetchone()
-                    if explained is None:
-                        raise QueryRejected("EXPLAIN returned no plan")
-                    plan = explain_gate.check(explained["QUERY PLAN"], self._gate)
-                cur.execute(sql.encode())
-                rows = output.apply(cur.fetchall() if cur.description else [])
+            if checked.gated:
+                # The guard has accepted exactly one SELECT, so wrapping it is safe.
+                cur.execute(b"EXPLAIN (FORMAT JSON, COSTS ON) " + sql.encode())
+                explained = cur.fetchone()
+                if explained is None:
+                    raise QueryRejected("EXPLAIN returned no plan")
+                plan = explain_gate.check(explained["QUERY PLAN"], self._gate)
+            cur.execute(sql.encode())
+            rows = output.apply(cur.fetchall() if cur.description else [])
         except QueryRejected as e:
             self._record(sql, purpose, "rejected", e.reason)
             raise

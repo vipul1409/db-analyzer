@@ -1,0 +1,37 @@
+{
+ "Node Type": "Aggregate",
+ "Strategy": "Plain",
+ "Partial Mode": "Simple",
+ "Parallel Aware": false,
+ "Async Capable": false,
+ "Startup Cost": 1170.0,
+ "Total Cost": 1170.01,
+ "Plan Rows": 1,
+ "Plan Width": 8,
+ "Disabled": false,
+ "Output": [
+  "count(*)"
+ ],
+ "Plans": [
+  {
+   "Node Type": "Seq Scan",
+   "Parent Relationship": "Outer",
+   "Parallel Aware": false,
+   "Async Capable": false,
+   "Relation Name": "legacy_imports",
+   "Schema": "public",
+   "Alias": "legacy_imports",
+   "Startup Cost": 0.0,
+   "Total Cost": 1053.0,
+   "Plan Rows": 46800,
+   "Plan Width": 0,
+   "Disabled": false,
+   "Output": [
+    "id",
+    "source",
+    "raw"
+   ],
+   "Filter": "(legacy_imports.source = $1)"
+  }
+ ]
+}

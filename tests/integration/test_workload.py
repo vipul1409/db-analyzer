@@ -5,10 +5,11 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from db_analyzer.adapters.postgres import plans as pg_plans
 from db_analyzer.adapters.postgres import workload as pg_workload
 from db_analyzer.adapters.postgres.session import open_session
 from db_analyzer.analyzers import workload
-from db_analyzer.core.model import Connection, Observation, SessionLimits
+from db_analyzer.core.model import AuditEntry, Connection, Observation, SessionLimits
 from db_analyzer.safety.executor import SafeExecutor
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH, fixture_dsn
@@ -193,3 +194,87 @@ def test_without_pg_stat_statements_the_run_reviews_the_schema_and_says_how_to_e
     assert run.status == "partial"
     assert [r.qualified for r in run.scope["workload"]] == ["public.customers", "public.orders"]
     assert "enable" in service.export(run.id, "md").decode().lower()
+
+
+def test_every_seeded_statement_is_planned_and_explained_by_its_plan_rules(
+    service: AnalyzerService, shop: Shop
+) -> None:
+    run = service.run(shop.id, ["workload"], min_stats_window=ANY_WINDOW)
+
+    ranked = slow_queries(service.run_observations(run.id))
+
+    # Every ranked statement is planned except calls the guard refuses to wrap (the seed's and
+    # other tests' pg_stat_statements_reset() and the like) and a typed literal normalization
+    # turned into `interval $2`, which the server cannot parse. Each says why.
+    skipped = {
+        o.evidence["text"]: o.evidence["plan_skipped"]
+        for o in ranked
+        if "plan_skipped" in o.evidence
+    }
+    for text, reason in skipped.items():
+        assert reason.startswith("refused: function ") or (
+            "interval $2" in text and reason == 'not planned: syntax error at or near "$2"'
+        ), (text, reason)
+    for q in SLOW:
+        [o] = [o for o in ranked if q["match"] in o.evidence["text"]]
+        assert "plan_skipped" not in o.evidence, o.evidence.get("plan_skipped")
+        assert o.evidence["plan"], q["match"]
+        assert {r["rule"] for r in o.evidence.get("plan_rules", [])} == set(q["plan_rules"])
+        assert o.evidence["row_lookup_only"] == q.get("row_lookup_only", False)
+        if q.get("row_lookup_only"):
+            assert (o.recommendation or "").startswith("The plan covers only how it finds")
+
+
+def _writes(major: int) -> tuple[int, int]:
+    """Rows in bookings, and rows ever inserted, updated or deleted in the shop database."""
+    with psycopg.connect(fixture_dsn(major, "postgres", GROUND_TRUTH["database"])) as conn:
+        conn.execute("SELECT pg_stat_force_next_flush()")
+        row = conn.execute(
+            """SELECT (SELECT count(*) FROM bookings),
+                      (SELECT sum(n_tup_ins + n_tup_upd + n_tup_del) FROM pg_stat_user_tables)"""
+        ).fetchone()
+        assert row is not None
+        return int(row[0]), int(row[1])
+
+
+@pytest.fixture(params=["generic_plan_option", "prepare"])
+def planning_path(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Both ways of planning, on any server: the PREPARE path is forced by pretending the server
+    predates EXPLAIN (GENERIC_PLAN)."""
+    if request.param == "prepare":
+        monkeypatch.setattr(pg_plans, "GENERIC_PLAN_OPTION", 10**9)
+    return str(request.param)
+
+
+def test_planning_dml_never_executes_it(shop: Shop, planning_path: str) -> None:
+    before = _writes(shop.major)
+    with open_session(seeded_dsn(shop.major), SessionLimits()) as conn:
+        executor = SafeExecutor(conn, "c1", audit=lambda _: None)
+        planned = [
+            pg_plans.generic_plan(executor, sql)
+            for sql in (
+                "UPDATE bookings SET amount = amount WHERE tenant_id = $1 AND status = $2",
+                "UPDATE bookings SET status = $1 WHERE account_id = $2",
+                "DELETE FROM bookings WHERE account_id = $1",
+            )
+        ]
+        left = conn.execute("SELECT count(*) FROM pg_prepared_statements").fetchone()
+
+    assert [p.skipped for p in planned] == [None, None, None]
+    assert all(p.row_lookup_only and p.plan for p in planned)
+    assert _writes(shop.major) == before
+    assert left == (0,)  # the PREPARE path deallocated what it prepared
+
+
+def test_a_statement_that_cannot_be_planned_says_why(shop: Shop, planning_path: str) -> None:
+    audit: list[AuditEntry] = []
+    with open_session(seeded_dsn(shop.major), SessionLimits()) as conn:
+        executor = SafeExecutor(conn, "c1", audit=audit.append)
+        missing = pg_plans.generic_plan(executor, "SELECT 1 FROM no_such_table WHERE x = $1")
+        values = pg_plans.generic_plan(executor, "INSERT INTO bookings (id) VALUES ($1)")
+        left = conn.execute("SELECT count(*) FROM pg_prepared_statements").fetchone()
+
+    assert missing.plan is None and "no_such_table" in (missing.skipped or "")
+    assert values.skipped == "INSERT … VALUES looks up no rows"
+    assert "failed" in {e.decision for e in audit}
+    assert left == (0,)

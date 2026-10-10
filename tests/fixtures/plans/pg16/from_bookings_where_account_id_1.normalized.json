@@ -1,0 +1,17 @@
+{
+ "node_type": "Seq Scan",
+ "rows": 10,
+ "width": 19,
+ "total_cost": 542.17,
+ "relation": "public.bookings",
+ "index": null,
+ "join_type": null,
+ "strategy": null,
+ "condition": null,
+ "filter": "(bookings.account_id = $1)",
+ "filter_columns": [
+  "account_id"
+ ],
+ "sort_key": [],
+ "children": []
+}

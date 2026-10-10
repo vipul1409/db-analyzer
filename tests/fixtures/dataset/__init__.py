@@ -175,6 +175,12 @@ WORKLOAD = [
         "SELECT id FROM events WHERE tenant_id = %s AND created_at > now() - interval '1 minute'",
         "tenant",
     ),
+    # One per remaining plan rule (issue #15): an inequality join the planner runs as a nested
+    # loop over every booking; an ORDER BY ... LIMIT that walks a whole index and filters; and a
+    # scan of the table whose statistics are stale.
+    ("SELECT count(*) FROM bookings b JOIN tenants t ON b.tenant_id < t.id", "none"),
+    ("SELECT id FROM events WHERE kind = %s ORDER BY tenant_id, created_at LIMIT 20", "kind"),
+    ("SELECT count(*) FROM legacy_imports WHERE source = %s", "source"),
 ]
 # Full sort of every event's key with tiny work_mem: spills to temp files. No literal in the
 # ORDER BY, so pg_stat_statements' normalized text is stable for the ground-truth match.
@@ -257,14 +263,17 @@ def _replay(conn: psycopg.Connection[Any], s: Scale) -> None:
     """Run the workload as an application would: parameterized statements, so
     pg_stat_statements records them with $n placeholders."""
     for sql, kind in WORKLOAD:
-        calls = s.replay_calls if kind != "tenant" else max(5, s.replay_calls // 10)
+        calls = s.replay_calls if kind in ("account", "booking") else max(5, s.replay_calls // 10)
         for i in range(calls):
             key = {
                 "account": 1 + (i * 37) % s.accounts,
                 "booking": 1 + (i * 101) % s.bookings,
                 "tenant": 1 + i % s.tenants,
+                "kind": f"kind-{i % 7}",
+                "source": "csv",
+                "none": None,
             }[kind]
-            conn.execute(sql, (key,))
+            conn.execute(sql, () if key is None else (key,))
     conn.execute("SET work_mem = '64kB'")
     for _ in range(3):
         conn.execute(SPILLING_SORT)

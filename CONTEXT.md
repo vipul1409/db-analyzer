@@ -38,6 +38,14 @@ _Avoid_: Skipped collection (the collection was measured), failed count
 Where a Connection's record of executed statements comes from (`pg_stat_statements`, later Azure Query Store). The workload analyzer ranks its statements; a source's statistics cover only the time since it was last reset, its **stats window**, and are not ranked when that is too short.
 _Avoid_: Query log, slow log
 
+**Generic plan**:
+The plan the server would use for a workload statement whatever values fill its placeholders: the planner's estimates, made without running the statement. A write is planned as the lookup that finds its rows, so its plan leaves out the write itself.
+_Avoid_: Query plan (for a plan with actual values), EXPLAIN ANALYZE output
+
+**Plan rule**:
+A deterministic check on a generic plan that names one reason a statement is slow (a large sequential scan for a few rows, a big nested loop, a sort or hash that spills), quoting the plan node it is about. A slow-query Finding's explanation is the plan rules that fired.
+_Avoid_: Heuristic, diagnosis, LLM explanation
+
 **Thread**:
 A conversation with the agent, bound to one Connection for its whole life.
 _Avoid_: Session, chat (as the stored record)

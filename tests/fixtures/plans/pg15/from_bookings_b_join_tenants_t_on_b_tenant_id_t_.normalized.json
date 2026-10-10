@@ -1,0 +1,78 @@
+{
+ "node_type": "Aggregate",
+ "rows": 1,
+ "width": 8,
+ "total_cost": 2942.17,
+ "relation": null,
+ "index": null,
+ "join_type": null,
+ "strategy": "Plain",
+ "condition": null,
+ "filter": null,
+ "filter_columns": [],
+ "sort_key": [],
+ "children": [
+  {
+   "node_type": "Nested Loop",
+   "rows": 139827,
+   "width": 0,
+   "total_cost": 2592.59,
+   "relation": null,
+   "index": null,
+   "join_type": "Inner",
+   "strategy": null,
+   "condition": null,
+   "filter": null,
+   "filter_columns": [],
+   "sort_key": [],
+   "children": [
+    {
+     "node_type": "Seq Scan",
+     "rows": 20974,
+     "width": 8,
+     "total_cost": 489.74,
+     "relation": "public.bookings",
+     "index": null,
+     "join_type": null,
+     "strategy": null,
+     "condition": null,
+     "filter": null,
+     "filter_columns": [],
+     "sort_key": [],
+     "children": []
+    },
+    {
+     "node_type": "Memoize",
+     "rows": 7,
+     "width": 8,
+     "total_cost": 0.27,
+     "relation": null,
+     "index": null,
+     "join_type": null,
+     "strategy": null,
+     "condition": null,
+     "filter": null,
+     "filter_columns": [],
+     "sort_key": [],
+     "children": [
+      {
+       "node_type": "Index Only Scan",
+       "rows": 7,
+       "width": 8,
+       "total_cost": 0.26,
+       "relation": "public.tenants",
+       "index": "public.tenants_pkey",
+       "join_type": null,
+       "strategy": null,
+       "condition": "(t.id > b.tenant_id)",
+       "filter": null,
+       "filter_columns": [],
+       "sort_key": [],
+       "children": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

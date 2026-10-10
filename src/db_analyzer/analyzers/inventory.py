@@ -210,21 +210,34 @@ def _bloat(s: StorageStats) -> Observed | None:
     )
 
 
+def stats_are_stale(
+    *, analyzed: bool, live_rows: int, modified_since_analyze: int, estimate: int | None
+) -> bool:
+    """Whether a collection's planner statistics are stale: never analyzed though it holds rows,
+    or changed by a large share since its last analyze."""
+    if not analyzed:
+        return live_rows >= STALE_MIN_ROWS
+    return modified_since_analyze >= max(STALE_MIN_ROWS, STALE_MIN_CHANGED_SHARE * (estimate or 0))
+
+
 def _stale_stats(s: StorageStats) -> Observed | None:
     m = s.maintenance
     if m is None:
         return None
     estimate = s.row_count if s.row_count_method == "estimate" else None
     never = m.last_analyze is None
+    if not stats_are_stale(
+        analyzed=not never,
+        live_rows=m.live_rows,
+        modified_since_analyze=m.modified_since_analyze,
+        estimate=estimate,
+    ):
+        return None
     if never:
-        if m.live_rows < STALE_MIN_ROWS:
-            return None
         title = f"{s.ref.qualified} has never been analyzed ({m.live_rows:,} live rows)"
         estimate_off = True
     else:
         changed = m.modified_since_analyze
-        if changed < max(STALE_MIN_ROWS, STALE_MIN_CHANGED_SHARE * (estimate or 0)):
-            return None
         title = f"{s.ref.qualified} statistics are stale: {changed:,} rows changed since analyze"
         base = max(estimate or 0, 1)
         estimate_off = m.live_rows >= STALE_OFF_BY * base or m.live_rows * STALE_OFF_BY <= base

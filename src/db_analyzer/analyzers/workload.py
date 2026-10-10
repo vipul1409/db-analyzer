@@ -2,19 +2,23 @@
 Connection has no source, reviews the schema instead (foreign keys without an index, tables read
 mostly by sequential scans). Store-agnostic: sources hand over `WorkloadStatement`s."""
 
+import dataclasses
 import hashlib
-from collections.abc import Callable, Sequence
-from dataclasses import replace
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
+from typing import Any
 
 from pglast import ast, parse_sql
 from pglast.parser import ParseError
 
+from db_analyzer.analyzers import plan_rules
 from db_analyzer.analyzers.inventory import SEVERITY_ORDER
+from db_analyzer.analyzers.plan_rules import PlanContext
 from db_analyzer.core.model import (
     Observed,
     ScanActivity,
     Severity,
+    StatementPlan,
     UnindexedForeignKey,
     WorkloadItem,
     WorkloadReport,
@@ -40,6 +44,14 @@ MEDIUM_SHARE = 0.10
 SEQ_MIN_SCANS = 50
 SEQ_MIN_ROWS = 10_000
 SEQ_MEDIUM_ROWS_READ = 10_000_000
+
+# Plan nodes kept in a slow statement's evidence.
+PLAN_LINES = 40
+ROW_LOOKUP_ONLY = (
+    "The plan covers only how it finds its rows: the analyzer may not EXPLAIN a write, so it "
+    "planned the SELECT that finds them. The write itself, triggers and index maintenance add "
+    "to that."
+)
 
 NO_PRIVILEGE_TEXT = "<insufficient privilege>"
 HIDDEN_TEXT = "text hidden (no pg_read_all_stats)"
@@ -181,7 +193,7 @@ def _rank(merged: list[WorkloadItem], total_ms: float, top_n: int) -> list[Workl
         for i in top[:top_n]:
             ranked_by.setdefault(i.fingerprint, []).append(name)
     chosen = [
-        replace(
+        dataclasses.replace(
             i,
             ranked_by=ranked_by[i.fingerprint],
             share_of_time=round(i.total_ms / total_ms, 4) if total_ms else 0.0,
@@ -216,12 +228,20 @@ def _warnings(
     return found
 
 
-def analyze(r: WorkloadReport) -> list[Observed]:
-    """One `slow_query` Finding per ranked statement, fingerprinted by the hash of its text."""
-    return [_slow_query(i) for i in r.items]
+def analyze(
+    r: WorkloadReport,
+    plans: Mapping[str, StatementPlan] | None = None,
+    context: PlanContext | None = None,
+) -> list[Observed]:
+    """One `slow_query` Finding per ranked statement, fingerprinted by the hash of its text.
+    `plans` holds the generic plan of each statement by fingerprint, where one was made; the
+    plan rules read it with `context` to say why the statement is slow."""
+    plans = plans or {}
+    context = context or PlanContext(relations={})
+    return [_slow_query(i, plans.get(i.fingerprint), context) for i in r.items]
 
 
-def _slow_query(i: WorkloadItem) -> Observed:
+def _slow_query(i: WorkloadItem, plan: StatementPlan | None, context: PlanContext) -> Observed:
     severity: Severity = (
         "high"
         if i.share_of_time >= HIGH_SHARE
@@ -240,6 +260,31 @@ def _slow_query(i: WorkloadItem) -> Observed:
             f"It read {format_bytes(i.shared_blks_read * BLOCK_BYTES)} from outside shared "
             "buffers: look for a missing index or a sequential scan on a large table."
         )
+    evidence: dict[str, Any] = {
+        "text": i.text,
+        "calls": i.calls,
+        "total_ms": round(i.total_ms, 3),
+        "mean_ms": round(i.mean_ms, 3),
+        "rows": i.rows,
+        "shared_blks_read": i.shared_blks_read,
+        "temp_blks_written": i.temp_blks_written,
+        "share_of_time": i.share_of_time,
+        "ranked_by": i.ranked_by,
+    }
+    recommendation = " ".join(hints) or None
+    if plan is not None:
+        evidence |= _plan_evidence(plan)
+        reasons = (
+            plan_rules.evaluate(plan.plan, context, temp_blks_written=i.temp_blks_written)
+            if plan.plan
+            else []
+        )
+        if reasons:
+            evidence["plan_rules"] = [dataclasses.asdict(r) for r in reasons]
+            # The plan says why: it replaces the hints guessed from the statistics alone.
+            recommendation = " ".join(r.explanation for r in reasons)
+        if plan.row_lookup_only:
+            recommendation = " ".join(t for t in (ROW_LOOKUP_ONLY, recommendation) if t)
     return Observed(
         category="slow_query",
         subject=i.fingerprint,
@@ -248,19 +293,18 @@ def _slow_query(i: WorkloadItem) -> Observed:
             f"{_head(i.text)}: {_duration(i.total_ms / 1000)} in total over {i.calls:,} calls "
             f"({i.mean_ms:.1f} ms each, {i.share_of_time:.0%} of the workload)"
         ),
-        evidence={
-            "text": i.text,
-            "calls": i.calls,
-            "total_ms": round(i.total_ms, 3),
-            "mean_ms": round(i.mean_ms, 3),
-            "rows": i.rows,
-            "shared_blks_read": i.shared_blks_read,
-            "temp_blks_written": i.temp_blks_written,
-            "share_of_time": i.share_of_time,
-            "ranked_by": i.ranked_by,
-        },
-        recommendation=" ".join(hints) or None,
+        evidence=evidence,
+        recommendation=recommendation,
     )
+
+
+def _plan_evidence(p: StatementPlan) -> dict[str, Any]:
+    if p.plan is None:
+        return {"plan_skipped": p.skipped, "row_lookup_only": p.row_lookup_only}
+    lines = p.plan.text()
+    if len(lines) > PLAN_LINES:
+        lines = [*lines[:PLAN_LINES], f"… {len(lines) - PLAN_LINES} more nodes"]
+    return {"plan": lines, "row_lookup_only": p.row_lookup_only}
 
 
 def schema_only_review(

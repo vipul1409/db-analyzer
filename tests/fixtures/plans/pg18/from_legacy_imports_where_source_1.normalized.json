@@ -1,0 +1,33 @@
+{
+ "node_type": "Aggregate",
+ "rows": 1,
+ "width": 8,
+ "total_cost": 1170.01,
+ "relation": null,
+ "index": null,
+ "join_type": null,
+ "strategy": "Plain",
+ "condition": null,
+ "filter": null,
+ "filter_columns": [],
+ "sort_key": [],
+ "children": [
+  {
+   "node_type": "Seq Scan",
+   "rows": 46800,
+   "width": 0,
+   "total_cost": 1053.0,
+   "relation": "public.legacy_imports",
+   "index": null,
+   "join_type": null,
+   "strategy": null,
+   "condition": null,
+   "filter": "(legacy_imports.source = $1)",
+   "filter_columns": [
+    "source"
+   ],
+   "sort_key": [],
+   "children": []
+  }
+ ]
+}

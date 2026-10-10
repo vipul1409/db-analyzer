@@ -1,0 +1,18 @@
+{
+ "Node Type": "Seq Scan",
+ "Parallel Aware": false,
+ "Async Capable": false,
+ "Relation Name": "bookings",
+ "Schema": "public",
+ "Alias": "bookings",
+ "Startup Cost": 0.0,
+ "Total Cost": 542.17,
+ "Plan Rows": 10,
+ "Plan Width": 19,
+ "Output": [
+  "id",
+  "status",
+  "amount"
+ ],
+ "Filter": "(bookings.account_id = $1)"
+}

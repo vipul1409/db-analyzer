@@ -26,8 +26,11 @@
   "slow_queries": [
     {"match": "FROM bookings WHERE account_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]},
     {"match": "FROM booking_items WHERE booking_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]},
-    {"match": "FROM events ORDER BY k", "plan_rules": ["spill_prone_sort"], "temp_blocks": true},
-    {"match": "UPDATE bookings SET amount = amount WHERE tenant_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"]}
+    {"match": "FROM events ORDER BY k", "plan_rules": ["spill_prone_sort_or_hash"], "temp_blocks": true},
+    {"match": "UPDATE bookings SET amount = amount WHERE tenant_id = $1", "plan_rules": ["seq_scan_selective_filter", "unindexed_fk_filter"], "row_lookup_only": true},
+    {"match": "FROM bookings b JOIN tenants t ON b.tenant_id < t.id", "plan_rules": ["big_nested_loop"]},
+    {"match": "FROM events WHERE kind = $1 ORDER BY tenant_id, created_at", "plan_rules": ["non_selective_index_scan"]},
+    {"match": "FROM legacy_imports WHERE source = $1", "plan_rules": ["stale_stats_estimate"]}
   ],
   "entity_map": {
     "hierarchy": ["tenant", "account", "booking"],
