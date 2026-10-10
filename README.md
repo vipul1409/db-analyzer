@@ -20,7 +20,18 @@ uv run dbx runs prod                        # past Runs, then `dbx compare prod 
 uv run --env-file .env dbx chat prod        # chat with the agent (needs OPENAI_API_KEY)
 uv run --env-file .env dbx chat prod --thread <id>   # resume a conversation, even after a restart
 uv run --env-file .env dbx serve            # the HTTP API on 127.0.0.1:8765 (--host, --port)
+make web                                    # the web UI on http://localhost:5173, against that API
 ```
+
+The web UI (`web/`) does everything the CLI does, in a browser on your machine:
+- add and test Connections (by the name of the DSN's environment variable), with what the analyzer can see and how to let it see more;
+- edit a Connection's session limits, EXPLAIN gate and identifier aliasing;
+- chat in Threads, with a live progress panel of the tools, subagents and SQL behind each answer, each statement's plan cost against the gate limit, and a Stop button;
+- start inventory or workload Runs without chat (Analyze), then read, compare and download them;
+- triage Findings: filter, read each one's Observations, copy its recommendation or DDL, acknowledge, mark fixed, and settle "fixed?";
+- read the audit log, per Thread if you like, and the month's token usage and estimated cost.
+
+The dev server proxies `/api` to `dbx serve` (`DBX_API_URL` points it elsewhere). When the API has a token, the UI asks for it once and keeps it in the browser.
 
 `dbx serve` offers everything above over HTTP, for the web UI: Connections and their probe, deterministic Runs, Findings and their status, Run comparison and export, the audit log, Threads and their history, and usage by Thread or by month. The CLI and the API share one local store. A message to a Thread streams the Turn's events as Server-Sent Events, including `subagent_started` and `subagent_finished`. A Thread runs one Turn at a time. `POST /api/threads/{id}/cancel`, or closing the stream, cancels the Turn, and the stream still ends with `usage` and `done`. Everything but chat works without `OPENAI_API_KEY`. The API takes a DSN's environment-variable name, never the DSN, so the variable has to be set where `dbx serve` runs. Set `DBX_API_TOKEN` to require it as a bearer token on every request but `/api/health`. The API listens beyond loopback only with a token. The interactive OpenAPI docs are at `/docs`, and the contract is committed as `web/openapi.json`. `AnalyzerService` and the event stream are frozen at v1 (ADR 0016).
 
@@ -57,8 +68,10 @@ The web UI's API client is generated from the API: `web/openapi.json` and `web/s
 
 ```sh
 make api-client             # export the OpenAPI spec and regenerate the TypeScript client
-make web-check              # typecheck web/
+make web-check              # typecheck and build web/
 ```
+
+`make web` serves the UI with hot reload while you work on it; it has no component tests, so `make web-check` is its check.
 
 ### Synthetic dataset
 

@@ -1,0 +1,72 @@
+/* The one design-token set. Light theme only in v1. Colours come from an instrument panel:
+   slate housing, white readouts, a gauge blue, and green / amber / red for how close a statement
+   came to the EXPLAIN gate. */
+:root {
+  --bg: #e7ebf0;
+  --panel: #ffffff;
+  --panel-sunk: #f3f5f8;
+  --ink: #15202b;
+  --muted: #5a6675;
+  --faint: #8d97a3;
+  --line: #cfd6de;
+  --line-strong: #a9b3be;
+
+  --accent: #2450b8;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eafb;
+
+  --ok: #2c8653;
+  --ok-soft: #e2f3e8;
+  --warn: #b97a06;
+  --warn-soft: #fbf1db;
+  --danger: #bf3328;
+  --danger-soft: #fbe5e2;
+  --hazard: #f2b705;
+  --danger-faint: #fdf6f5;
+  --warn-line: #ecd7a6;
+  --ok-line: #b5dcc4;
+
+  /* The dark surfaces (the rail and the progress trace), and what sits on them. */
+  --dark-sunk: #0d151d;
+  --on-dark: #c9d3de;
+  --on-dark-strong: #ffffff;
+  --on-dark-bright: #e8edf3;
+  --on-dark-muted: #8592a1;
+  --on-dark-faint: #5b6b7c;
+  --on-dark-line: #334252;
+  --on-dark-hover: rgb(255 255 255 / 10%);
+  --on-dark-link: #93b4f0;
+  --on-dark-ok: #4fc27f;
+  --on-dark-danger: #ff8a7e;
+  --track: rgb(127 140 155 / 25%);
+  --scrim: rgb(21 32 43 / 45%);
+
+  --sev-high: var(--danger);
+  --sev-medium: var(--warn);
+  --sev-low: var(--accent);
+  --sev-info: var(--faint);
+
+  --font-display: "Archivo Variable", "Arial Narrow", sans-serif;
+  --font-body: "Source Sans 3 Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2.125rem;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius: 6px;
+  --radius-sm: 3px;
+  --shadow: 0 1px 2px rgb(21 32 43 / 8%), 0 0 0 1px rgb(21 32 43 / 6%);
+  --shadow-lifted: 0 20px 60px rgb(21 32 43 / 30%);
+  --rail-width: 232px;
+}

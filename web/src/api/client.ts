@@ -39,6 +39,18 @@ export class ApiError extends Error {
   }
 }
 
+/** The ApiError for a refused response; a body that isn't the API's (a proxy's 502) keeps the status. */
+async function refused(response: Response): Promise<ApiError> {
+  try {
+    return new ApiError(response.status, (await response.json()) as ErrorBody);
+  } catch {
+    return new ApiError(response.status, {
+      code: `http_${response.status}`,
+      message: response.statusText || "request failed",
+    });
+  }
+}
+
 /**
  * Send a message to a Thread and yield the Turn's events as they arrive; the last is `done`.
  * Read with fetch, not EventSource, so the token travels in a header. Aborting `signal` closes
@@ -56,9 +68,7 @@ export async function* streamTurn(
     `${baseUrl}/api/threads/${encodeURIComponent(threadId)}/messages`,
     { method: "POST", headers, body: JSON.stringify({ message }), signal },
   );
-  if (!response.ok || !response.body) {
-    throw new ApiError(response.status, (await response.json()) as ErrorBody);
-  }
+  if (!response.ok || !response.body) throw await refused(response);
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffered = "";
   for (;;) {
@@ -73,4 +83,30 @@ export async function* streamTurn(
       if (data) yield JSON.parse(data.slice("data: ".length)) as AgentEvent;
     }
   }
+}
+
+export type ReportFormat = NonNullable<
+  NonNullable<paths["/api/runs/{run_id}/export"]["get"]["parameters"]["query"]>["format"]
+>;
+
+/** Save a Run's report as a file. Fetched, not linked, so the token travels in a header. */
+export async function downloadReport(
+  runId: string,
+  format: ReportFormat,
+  { token, baseUrl = "" }: ClientOptions = {},
+): Promise<void> {
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const response = await fetch(
+    `${baseUrl}/api/runs/${encodeURIComponent(runId)}/export?format=${format}`,
+    { headers },
+  );
+  if (!response.ok) throw await refused(response);
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `run-${runId}.${format}`;
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
 }

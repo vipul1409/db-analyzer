@@ -2,7 +2,7 @@ COMPOSE := docker compose -f tests/fixtures/docker-compose.yml -p db-analyzer-fi
 # Fixtures to start, e.g. `make db-up PG="pg15 pg16"`. Narrowed to pg17 during development.
 PG ?= pg17
 
-.PHONY: check lint typecheck test test-integration db-up db-down db-seed fmt api-client web-check serve
+.PHONY: check lint typecheck test test-integration db-up db-down db-seed fmt api-client web-check web serve
 
 check: lint typecheck test
 
@@ -30,8 +30,13 @@ api-client:
 	uv run python -m db_analyzer.api.openapi
 	npm --prefix web run gen
 
+# Typecheck and build web/ (the build is the UI's only check: it has no component tests).
 web-check:
-	npm --prefix web run typecheck
+	npm --prefix web run build
+
+# The web UI's dev server on http://localhost:5173, proxying /api to `make serve` (run both).
+web:
+	npm --prefix web run dev
 
 serve:
 	uv run dbx serve
