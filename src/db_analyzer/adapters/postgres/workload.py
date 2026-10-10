@@ -9,6 +9,7 @@ from db_analyzer.core.model import (
     ProbeResult,
     ScanActivity,
     UnindexedForeignKey,
+    WorkloadReading,
     WorkloadSource,
     WorkloadStatement,
 )
@@ -27,28 +28,65 @@ WHERE s.dbid = (SELECT d.oid FROM pg_database d WHERE d.datname = current_databa
 """
 
 
-def source(probe: ProbeResult) -> WorkloadSource | None:
-    """The best workload source the Connection has. Reading pg_stat_statements errors unless the
-    module is also preloaded (e.g. on Azure before the restart), so both must hold."""
-    installed = "pg_stat_statements" in probe.extensions
-    preloaded = "pg_stat_statements" in (probe.settings.get("shared_preload_libraries") or "")
-    return "pg_stat_statements" if installed and preloaded else None
+class PgStatStatements:
+    """pg_stat_statements as a workload source. Reading it errors unless the module is also
+    preloaded (e.g. on Azure before the restart), so both must hold before it is read."""
 
+    name: WorkloadSource = "pg_stat_statements"
 
-def statements(executor: SafeExecutor, probe: ProbeResult) -> list[WorkloadStatement]:
-    schema = probe.extension_schemas["pg_stat_statements"].replace('"', '""')
-    rows = executor.execute(_STATEMENTS.format(schema=f'"{schema}"'), purpose="workload")
-    return [
-        WorkloadStatement(
-            text=str(r["query"]),
-            calls=int(r["calls"]),
-            total_ms=float(r["total_exec_time"]),
-            rows=int(r["rows"]),
-            shared_blks_read=int(r["shared_blks_read"]),
-            temp_blks_written=int(r["temp_blks_written"]),
+    def enable_steps(self, probe: ProbeResult) -> list[str]:
+        installed = "pg_stat_statements" in probe.extensions
+        preloaded = "pg_stat_statements" in (probe.settings.get("shared_preload_libraries") or "")
+        if installed and preloaded:
+            return []
+        return enable_steps(installed, preloaded, probe.host_type == "azure_flexible")
+
+    def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading:
+        schema = probe.extension_schemas["pg_stat_statements"].replace('"', '""')
+        rows = executor.execute(_STATEMENTS.format(schema=f'"{schema}"'), purpose="workload")
+        return WorkloadReading(
+            [
+                WorkloadStatement(
+                    text=str(r["query"]),
+                    calls=int(r["calls"]),
+                    total_ms=float(r["total_exec_time"]),
+                    rows=int(r["rows"]),
+                    shared_blks_read=int(r["shared_blks_read"]),
+                    temp_blks_written=int(r["temp_blks_written"]),
+                )
+                for r in rows
+            ],
+            stats_reset=probe.stats.statements_stats_reset,
         )
-        for r in rows
-    ]
+
+
+PG_STAT_STATEMENTS = PgStatStatements()
+
+
+def enable_steps(installed: bool, preloaded: bool, azure: bool) -> list[str]:
+    """What to do, in order, to get pg_stat_statements working."""
+    steps = []
+    if not preloaded:
+        steps.append(
+            "Add pg_stat_statements to the server parameter shared_preload_libraries"
+            + (" (Azure portal: Server parameters), then restart the server." if azure else ",")
+            + ("" if azure else " then restart PostgreSQL: it is only read at startup.")
+        )
+    if not installed:
+        steps.append(
+            "In this database, as a role allowed to: CREATE EXTENSION pg_stat_statements;"
+            + (" On Azure, allow it in azure.extensions first." if azure else "")
+        )
+    steps.append(
+        "Let the analyzer role read other roles' statements: GRANT pg_read_all_stats TO "
+        "<analyzer role>; (pg_monitor includes it)."
+    )
+    steps.append(
+        "Optionally set pg_stat_statements.track = all (the default, top, skips statements "
+        "run inside functions) and track_io_timing = on."
+    )
+    steps.append("Rank the workload again after a day or so of normal traffic.")
+    return steps
 
 
 def unindexed_foreign_keys(

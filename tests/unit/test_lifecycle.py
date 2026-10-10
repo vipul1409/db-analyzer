@@ -38,6 +38,7 @@ def finding(
     status: FindingStatus = "open",
     unobserved_by: str | None = None,
     collection: str | None = None,
+    covered_by: AnalyzerName | None = "inventory",
 ) -> Finding:
     category, subject = fingerprint.split(":")[:2]
     return Finding(
@@ -50,6 +51,7 @@ def finding(
         last_seen_run="r1",
         unobserved_by=unobserved_by,
         collection=collection or subject,
+        covered_by=covered_by,
     )
 
 
@@ -101,8 +103,14 @@ def test_an_earlier_fixed_prompt_stands_until_a_covering_run_settles_it() -> Non
     assert after(run([TENANTS]), finding(unobserved_by="r1")).unobserved_by == "r1"
 
 
-def test_size_ranking_facts_never_ask_fixed() -> None:
-    assert after(run([EVENTS]), finding("size:public.events")).unobserved_by is None
+def test_a_finding_no_analyzer_covers_never_asks_fixed() -> None:
+    assert after(run([EVENTS]), finding(covered_by=None)).unobserved_by is None
+
+
+def test_an_uncovered_finding_on_a_dropped_relation_is_still_obsolete() -> None:
+    f = finding("size:public.events", covered_by=None)
+
+    assert after(run([TENANTS]), f, existing={"public.tenants"}).status == "obsolete"
 
 
 def test_size_problems_with_a_rule_do_ask_fixed() -> None:

@@ -4,7 +4,6 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -16,11 +15,9 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.config import get_stream_writer
 
-from db_analyzer import report
+from db_analyzer import report, runs
 from db_analyzer.adapters import postgres as pg
-from db_analyzer.adapters.postgres import inventory as pg_inventory
 from db_analyzer.adapters.postgres import probe as pg_probe
-from db_analyzer.adapters.postgres import workload as pg_workload
 from db_analyzer.adapters.postgres.queries import LIBRARY
 from db_analyzer.adapters.postgres.session import open_session
 from db_analyzer.adapters.sql_common.templates import run_template
@@ -47,23 +44,19 @@ from db_analyzer.agent.llm import (
     make_model,
 )
 from db_analyzer.agent.tools import build_tools
-from db_analyzer.analyzers import index_health, inventory, workload
-from db_analyzer.core import lifecycle
+from db_analyzer.analyzers import workload
+from db_analyzer.core import lifecycle, run_view
 from db_analyzer.core.comparison import RunComparison, compare
 from db_analyzer.core.model import (
-    AnalyzerName,
     AuditEntry,
     Capability,
-    CollectionRef,
     Connection,
     ConnectionRefused,
     Finding,
     FindingStatus,
     GateLimits,
-    IndexStats,
     LLMRequestLog,
     Observation,
-    Observed,
     ProbeResult,
     QueryCapReached,
     QueryRejected,
@@ -75,12 +68,11 @@ from db_analyzer.core.model import (
     UnknownCollections,
     WorkloadReport,
 )
+from db_analyzer.core.run_view import RunView
 from db_analyzer.safety.aliases import Aliases, assign
 from db_analyzer.safety.executor import QueryBudget, Row, SafeExecutor
 from db_analyzer.store.store import Store
 
-SUPPORTED_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory", "workload")
-DEFAULT_ANALYZERS: tuple[AnalyzerName, ...] = ("inventory",)
 CURRENT_STATUSES: tuple[FindingStatus, ...] = ("open", "acknowledged", "fixed")  # not obsolete
 SqlObserver = Callable[[AuditEntry], None]
 
@@ -134,7 +126,7 @@ class AnalyzerService:
     def run(
         self,
         connection_id: str,
-        analyzers: Sequence[AnalyzerName] = DEFAULT_ANALYZERS,
+        analyzers: Sequence[str] = runs.DEFAULT,
         thread_id: str | None = None,
         budget: QueryBudget | None = None,
         on_sql: SqlObserver | None = None,
@@ -143,85 +135,44 @@ class AnalyzerService:
         exact_counts: bool = False,
         min_stats_window: timedelta = workload.MIN_STATS_WINDOW,
     ) -> Run:
-        """A deterministic Run, no LLM: probe, measure, record Findings and Observations.
+        """A deterministic Run, no LLM: probe, collect with each analyzer, record Findings and
+        Observations, then move the Connection's Findings through their lifecycle.
 
         `inventory` measures sizes and index health. `collections` targets it at those tables
         (schema-qualified, or bare when unambiguous); None measures every one. `exact_counts`
-        also counts their rows with count(*), each only where the EXPLAIN gate allows: a refused
-        count is recorded on the collection with its reason, and the collection keeps its
-        estimate.
+        also counts their rows with count(*), each only where the EXPLAIN gate allows.
 
-        `workload` ranks the most expensive statements from pg_stat_statements, and refuses to
-        when its statistics are younger than `min_stats_window`. With no workload source it
-        reviews the schema instead (ADR 0010). Either way the Run is partial when no ranking
-        was made."""
-        if unsupported := set(analyzers) - set(SUPPORTED_ANALYZERS):
-            raise ValueError(f"analyzers not available yet: {sorted(unsupported)}")
-        if (collections is not None or exact_counts) and "inventory" not in analyzers:
-            raise ValueError("collections and exact_counts apply to the inventory analyzer")
+        `workload` ranks the most expensive statements, and refuses to when its statistics are
+        younger than `min_stats_window`. With no workload source it reviews the schema instead
+        (ADR 0010). Either way the Run is partial when no ranking was made.
+
+        Raises `runs.UnknownAnalyzer`, or `runs.OptionsNotAccepted` for an option none of
+        `analyzers` accepts."""
+        options = runs.RunOptions(collections, exact_counts, min_stats_window)
+        chosen = runs.chosen_analyzers(analyzers, options)
         connection = self._store.get_connection(connection_id)
         run = self._store.start_run(connection.id, thread_id)
-        found: list[Observed] = []
-        scope: dict[AnalyzerName, list[CollectionRef]] = {}
-        listed: list[StorageStats] | None = None
-        indexes: list[IndexStats] = []
-        workload_report: WorkloadReport | None = None
         try:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
-                if "inventory" in analyzers:
-                    listed = pg_inventory.storage_stats(executor, probe.server_version_num)
-                    indexes = pg_inventory.index_stats(executor, probe.server_version_num)
-                    measured = listed
-                    if collections is not None:
-                        measured = inventory.select(measured, list(collections))
-                    measured = _measure_table_data(
-                        executor, probe, connection.gate, measured, exact_counts
-                    )
-                if "workload" in analyzers:
-                    review = _workload(executor, probe, min_stats_window)
+                context = runs.RunContext(executor, probe, connection.gate, options)
+                outcome = runs.combine({a.name: a.collect(context) for a in chosen})
             self._store.save_probe(connection.id, probe)
-            if listed is not None:
-                self._store.save_snapshots(run.id, measured)
-                measured_refs = {m.ref for m in measured}
-                index_problems = index_health.analyze(
-                    [i for i in indexes if i.table in measured_refs],
-                    stats_reset=probe.stats.database_stats_reset,
-                    now=probe.taken_at,
-                    on_replica=probe.in_recovery,
-                )
-                found = inventory.analyze(
-                    measured, broad=collections is None, other_problems=index_problems
-                )
-                # Inventory reads sizes from the catalog, which needs no table privilege and
-                # passes the gate: it skips measurements (ADR 0007), never a whole collection.
-                scope["inventory"] = [m.ref for m in measured]
-            if "workload" in analyzers:
-                workload_report = review.report
-                self._store.save_workload(run.id, workload_report)
-                found += review.found
-                if review.scope is not None:
-                    scope["workload"] = review.scope
-            self._store.record_observations(connection.id, run.id, found)
+            self._store.save_snapshots(run.id, outcome.storage)
+            if outcome.workload is not None:
+                self._store.save_workload(run.id, outcome.workload)
+            self._store.record_observations(connection.id, run.id, outcome.found)
         except BaseException:
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
             raise
-        # A workload that was refused, or reviewed from the schema alone, was not ranked.
-        ranked = workload_report is None or (
-            workload_report.source is not None and workload_report.refused is None
-        )
         run = self._store.finish_run(
-            run.id, "complete" if ranked else "partial", scope=scope, skipped={}
+            run.id, outcome.status, scope=outcome.scope, skipped=outcome.skipped
         )
         changed = lifecycle.after_run(
             run,
             self._store.findings(connection.id),
-            {o.fingerprint for o in found},
-            existing=(
-                None
-                if listed is None
-                else {s.ref.qualified for s in listed} | {i.name for i in indexes}
-            ),
+            {o.fingerprint for o in outcome.found},
+            existing=outcome.existing,
         )
         self._store.update_findings(changed)
         return run
@@ -294,17 +245,23 @@ class AnalyzerService:
             a, b, self._store.snapshots(a.id), self._store.snapshots(b.id), seen(a), seen(b)
         )
 
+    def run_view(self, run_id: str) -> RunView:
+        """Everything a reader shows of one Run, ranked, with problems, facts and what was
+        skipped already told apart."""
+        run = self._store.get_run(run_id)
+        return run_view.build(
+            self._store.get_connection(run.connection_id),
+            run,
+            self._store.run_observations(run_id),
+            self._store.snapshots(run_id),
+            self._store.workload(run_id),
+        )
+
     def export(self, run_id: str, fmt: Literal["md", "json"] = "md") -> bytes:
         """A Run's report: Markdown to read, or JSON laid out so two exports diff line by
         line."""
-        run = self._store.get_run(run_id)
-        connection = self._store.get_connection(run.connection_id)
-        measured = self._store.snapshots(run_id)
-        observations = self._store.run_observations(run_id)
-        statements = self._store.workload(run_id)
-        if fmt == "json":
-            return report.json_export(connection, run, measured, observations, statements).encode()
-        return report.markdown(connection, run, measured, observations, statements).encode()
+        view = self.run_view(run_id)
+        return (report.json_export(view) if fmt == "json" else report.markdown(view)).encode()
 
     def audit(self, connection_id: str, thread_id: str | None = None) -> list[AuditEntry]:
         return self._store.audit(connection_id, thread_id)
@@ -444,104 +401,6 @@ class AnalyzerService:
             yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
 
 
-@dataclass(frozen=True)
-class _WorkloadReview:
-    """The workload part of a Run: its report, its Findings, and the collections it measured
-    (None when it measured none: the statistics were refused, or no source was reviewed)."""
-
-    report: WorkloadReport
-    found: list[Observed]
-    scope: list[CollectionRef] | None
-
-
-def _workload(
-    executor: SafeExecutor, probe: ProbeResult, min_stats_window: timedelta
-) -> _WorkloadReview:
-    """Rank the workload source's statements. With no source, review the schema instead and say
-    how to enable one; with statistics too young, rank nothing."""
-    if (source := pg_workload.source(probe)) is None:
-        installed = "pg_stat_statements" in probe.extensions
-        preloaded = "pg_stat_statements" in (probe.settings.get("shared_preload_libraries") or "")
-        steps = workload.enable_steps(installed, preloaded, probe.host_type == "azure_flexible")
-        foreign_keys = pg_workload.unindexed_foreign_keys(executor, probe.server_version_num)
-        scans = pg_workload.scan_activity(executor, probe.server_version_num)
-        return _WorkloadReview(
-            workload.no_source(steps),
-            workload.schema_only_review(foreign_keys, scans),
-            [s.table for s in scans],
-        )
-    report = workload.report(
-        pg_workload.statements(executor, probe),
-        source=source,
-        stats_reset=probe.stats.statements_stats_reset,
-        now=probe.taken_at,
-        on_replica=probe.in_recovery,
-        min_window=min_stats_window,
-    )
-    # Statements name no collections, so a ranked workload has an empty list of them.
-    return _WorkloadReview(report, workload.analyze(report), None if report.refused else [])
-
-
-def _measure_table_data(
-    executor: SafeExecutor,
-    probe: ProbeResult,
-    gate: GateLimits,
-    measured: list[StorageStats],
-    exact_counts: bool,
-) -> list[StorageStats]:
-    """The measurements that read table data rather than the catalog: a dead-tuple scan where
-    the counters suggest bloat, and exact counts when asked. Each is skipped, with the reason,
-    where the gate or a privilege refuses it; the query cap skips everything after it."""
-    out: dict[int, StorageStats] = {i: s for i, s in enumerate(measured)}
-    pgstattuple = probe.extension_schemas.get("pgstattuple")
-    jobs: list[tuple[int, str]] = [
-        (i, "dead_tuple_scan") for i, s in out.items() if inventory.needs_dead_tuple_scan(s)
-    ]
-    if exact_counts:  # smallest first, so a cap or timeout costs the fewest counts
-        jobs += [(i, "exact_count") for i in sorted(out, key=lambda i: out[i].total_bytes)]
-
-    def skip(i: int, job: str, why: str) -> None:
-        out[i] = replace(out[i], skipped={**out[i].skipped, job: why})
-
-    capped: str | None = None
-    for i, job in jobs:
-        s = out[i]
-        if capped is not None:
-            skip(i, job, capped)
-            continue
-        try:
-            if job == "exact_count":
-                n = pg_inventory.count_exactly(executor, s.ref)
-                out[i] = replace(s, row_count=n, row_count_method="exact")
-            elif pgstattuple is None:
-                skip(i, job, "pgstattuple is not installed")
-            elif (rows := _rows_to_read(s)) > gate.max_scan_rows:
-                skip(
-                    i,
-                    job,
-                    f"about {rows:,} rows to read exceeds the scan limit ({gate.max_scan_rows:,})",
-                )
-            else:
-                out[i] = replace(
-                    s, dead_tuple_scan=pg_inventory.scan_dead_tuples(executor, s.ref, pgstattuple)
-                )
-        except QueryCapReached as e:
-            capped = e.reason
-            skip(i, job, capped)
-        except QueryRejected as e:
-            skip(i, job, e.reason)
-        except psycopg.errors.InsufficientPrivilege:
-            skip(i, job, "no SELECT privilege on the table")
-        except psycopg.Error as e:
-            skip(i, job, str(e).strip())
-    return list(out.values())
-
-
-def _rows_to_read(s: StorageStats) -> int:
-    m = s.maintenance
-    return 0 if m is None else m.live_rows + m.dead_rows
-
-
 class AgentTurn:
     """The TurnBackend the agent's tools call: one Thread's Connection, one Turn's query cap,
     and SQL and Run events streamed to the caller. Failures come back as explicit errors, so
@@ -575,9 +434,7 @@ class AgentTurn:
                 _sql_events(emit),
             )
             emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.storage(
-                run, self._service.storage(run.id), self._service.run_observations(run.id), top_n
-            )
+            return digest.storage(self._service.run_view(run.id), top_n)
 
         return self._guarded(measure)
 
@@ -596,7 +453,7 @@ class AgentTurn:
                 exact_counts=True,
             )
             emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.exact_counts(run, self._service.storage(run.id))
+            return digest.exact_counts(self._service.run_view(run.id))
 
         return self._guarded(count)
 

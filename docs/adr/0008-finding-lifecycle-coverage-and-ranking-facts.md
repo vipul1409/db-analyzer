@@ -1,6 +1,6 @@
 # Finding lifecycle: coverage, ranking facts and where obsolete comes from
 
-**Status:** accepted (#12); coverage amended by ADR 0009 (Findings carry their collection, and index categories are covered)
+**Status:** accepted (#12); coverage amended by ADR 0009 (Findings carry their collection, and index categories are covered) and by ADR 0011 (analyzers declare the categories they cover; facts are Observations of severity `info`)
 
 The lifecycle rules are plain Python in `core/lifecycle.py`, applied by `AnalyzerService.run` after the Run is finished. A Run's outcome for each Finding is one of:
 

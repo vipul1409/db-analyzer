@@ -205,6 +205,15 @@ class WorkloadStatement:
 
 
 @dataclass(frozen=True)
+class WorkloadReading:
+    """What a workload source holds now: its statements, and when its statistics were last
+    reset (the start of the window they cover; None when unknown)."""
+
+    statements: list[WorkloadStatement]
+    stats_reset: datetime | None
+
+
+@dataclass(frozen=True)
 class WorkloadItem:
     """One distinct statement of the workload, ranked. `fingerprint` is a hash of the
     normalized text, never the server's query id, so it holds across versions."""
@@ -308,6 +317,13 @@ SettableStatus = Literal["open", "acknowledged", "fixed"]  # obsolete is set by 
 Severity = Literal["info", "low", "medium", "high"]
 
 
+def is_fact(severity: Severity) -> bool:
+    """Whether an Observation states a fact (a table among the largest) rather than a problem.
+    Facts are never covered, so a Run that stops seeing one never asks "fixed?", and Run
+    comparison and summaries leave them out of the problems."""
+    return severity == "info"
+
+
 @dataclass(frozen=True)
 class Observed:
     """What an analyzer saw in this Run, before it is recorded as a Finding and Observation."""
@@ -321,10 +337,15 @@ class Observed:
     ddl: str | None = None
     rule: str | None = None  # when one subject can have several Findings of this category
     collection: str | None = None  # the collection the subject is or belongs to, if any
+    covered_by: AnalyzerName | None = None  # set by the Run, from the analyzer's declaration
 
     @property
     def fingerprint(self) -> str:
         return ":".join(p for p in (self.category, self.subject, self.rule) if p)
+
+    @property
+    def is_fact(self) -> bool:
+        return is_fact(self.severity)
 
 
 @dataclass(frozen=True)
@@ -342,6 +363,10 @@ class Finding:
     last_seen_run: str
     unobserved_by: str | None = None
     collection: str | None = None  # the collection the subject is or belongs to, if any
+    # The analyzer whose scope decides whether a Run's silence about this Finding means
+    # something, as the latest Run to observe it recorded. None for facts, and for categories no
+    # analyzer covers yet: those never ask "fixed?".
+    covered_by: AnalyzerName | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +380,10 @@ class Observation:
     evidence: dict[str, Any]
     recommendation: str | None
     ddl: str | None
+
+    @property
+    def is_fact(self) -> bool:
+        return is_fact(self.severity)
 
 
 @dataclass(frozen=True)

@@ -28,18 +28,21 @@ from db_analyzer.core.model import (
     UnknownCollections,
     WorkloadReport,
 )
+from db_analyzer.core.run_view import RunView
 from db_analyzer.core.units import format_bytes
-from db_analyzer.service import (
-    CURRENT_STATUSES,
-    DEFAULT_ANALYZERS,
-    SUPPORTED_ANALYZERS,
-    AnalyzerService,
-)
+from db_analyzer.runs import DEFAULT as DEFAULT_ANALYZERS
+from db_analyzer.runs import OptionsNotAccepted, RunOptions, UnknownAnalyzer, chosen_analyzers
+from db_analyzer.service import CURRENT_STATUSES, AnalyzerService
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
 MIN_STATS_WINDOW_HOURS = MIN_STATS_WINDOW.total_seconds() / 3600
+_OPTION_FLAGS = {
+    "collections": "--table",
+    "exact_counts": "--exact-counts",
+    "min_stats_window": "--min-stats-window",
+}
 WANTED_EXTENSIONS = ("pg_stat_statements", "hypopg", "pgstattuple", "pg_buffercache")
 
 
@@ -117,27 +120,30 @@ def analyze(
     service = AnalyzerService()
     connection = _connection(service, name)
     chosen = analyzer or list(DEFAULT_ANALYZERS)
-    if unknown := sorted(set(chosen) - set(SUPPORTED_ANALYZERS)):
-        console.print(
-            f"[bold red]Unknown analyzer {unknown[0]!r}.[/] Choose from: inventory, workload"
-        )
-        raise typer.Exit(1)
-    if (table or exact_counts) and "inventory" not in chosen:
-        console.print("[bold red]--table and --exact-counts apply to the inventory analyzer.[/]")
-        raise typer.Exit(1)
+    options = RunOptions(table or None, exact_counts, timedelta(hours=min_stats_window))
+    try:
+        chosen_analyzers(chosen, options)
+    except UnknownAnalyzer as e:
+        console.print(f"[bold red]{escape(str(e))}[/]")
+        raise typer.Exit(1) from e
+    except OptionsNotAccepted as e:
+        flags = " and ".join(_OPTION_FLAGS[o] for o in e.options)
+        verb = "applies" if len(e.options) == 1 else "apply"
+        console.print(f"[bold red]{flags} {verb} to the {e.analyzer} analyzer.[/]")
+        raise typer.Exit(1) from e
     with _database_errors("Analysis failed"):
         try:
             run = service.run(
                 connection.id,
-                [a for a in SUPPORTED_ANALYZERS if a in chosen],
-                collections=table or None,
-                exact_counts=exact_counts,
-                min_stats_window=timedelta(hours=min_stats_window),
+                chosen,
+                collections=options.collections,
+                exact_counts=options.exact_counts,
+                min_stats_window=options.min_stats_window,
             )
         except UnknownCollections as e:
             console.print(f"[bold red]{e}[/]")
             raise typer.Exit(1) from e
-    _render_run(service, run)
+    _render_run(service.run_view(run.id))
     if report is not None:
         fmt: Literal["md", "json"] = "json" if report.suffix.lower() == ".json" else "md"
         report.write_bytes(service.export(run.id, fmt))
@@ -402,20 +408,18 @@ def _database_errors(failed: str) -> Iterator[None]:
         raise typer.Exit(1) from e
 
 
-def _render_run(service: AnalyzerService, run: Run, top: int = 10) -> None:
-    measured = sorted(service.storage(run.id), key=lambda s: -s.total_bytes)
-    if "inventory" in run.scope:
-        _render_sizes(run, measured, top)
+def _render_run(view: RunView, top: int = 10) -> None:
+    if view.storage is not None:
+        _render_sizes(view.run, view.storage, top)
     else:
-        console.print(f"Run {run.id[:8]}, {run.status}")
-    if (statements := service.workload(run.id)) is not None:
-        _render_workload(statements)
-    problems = [o for o in service.run_observations(run.id) if o.severity != "info"]
-    for rank, o in enumerate(problems, start=1):
+        console.print(f"Run {view.run.id[:8]}, {view.run.status}")
+    if view.workload is not None:
+        _render_workload(view.workload)
+    for rank, o in enumerate(view.problems, start=1):
         console.print(f"{rank}. [bold]{o.severity}[/] {escape(o.fingerprint)}: {escape(o.title)}")
-    for s in measured:
-        for what, why in s.skipped.items():
-            console.print(f"[yellow]{s.ref.qualified}: {what.replace('_', ' ')} skipped:[/] {why}")
+    for s in view.skipped:
+        what = "collection" if s.measurement is None else s.measurement.replace("_", " ")
+        console.print(f"[yellow]{s.collection}: {what} skipped:[/] {escape(s.reason)}")
 
 
 def _render_workload(w: WorkloadReport) -> None:

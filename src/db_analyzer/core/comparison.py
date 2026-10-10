@@ -3,7 +3,6 @@ or targeted Run never looks like a regression or a fix."""
 
 from dataclasses import dataclass
 
-from db_analyzer.core.lifecycle import evaluated_by
 from db_analyzer.core.model import AnalyzerName, Finding, Run, StorageStats
 
 
@@ -63,8 +62,7 @@ def compare(
         return {
             f.fingerprint
             for f in seen
-            if (analyzer := evaluated_by(f)) is not None
-            and f.collection in shared.get(analyzer, [])
+            if f.covered_by is not None and f.collection in shared.get(f.covered_by, [])
         }
 
     before, after = problems(a_seen), problems(b_seen)

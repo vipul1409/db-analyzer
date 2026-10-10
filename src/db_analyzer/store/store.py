@@ -235,6 +235,7 @@ class Store:
                     )
                     s.add(finding)
                 finding.last_seen_run = run_id
+                finding.covered_by = o.covered_by
                 s.flush()
                 s.add(
                     ObservationRow(
@@ -439,6 +440,7 @@ def _finding(row: FindingRow) -> Finding:
         last_seen_run=row.last_seen_run,
         unobserved_by=row.unobserved_by,
         collection=row.collection,
+        covered_by=row.covered_by,  # type: ignore[arg-type]
     )
 
 

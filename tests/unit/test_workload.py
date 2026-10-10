@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+from db_analyzer.adapters.postgres import workload as pg_workload
 from db_analyzer.analyzers import workload
 from db_analyzer.core.model import (
     CollectionKind,
@@ -186,7 +187,7 @@ def test_a_statement_that_spills_to_disk_gets_advice() -> None:
 
 
 def test_no_source_gives_steps_to_enable_pg_stat_statements() -> None:
-    steps = workload.enable_steps(installed=False, preloaded=False, azure=False)
+    steps = pg_workload.enable_steps(installed=False, preloaded=False, azure=False)
 
     text = " ".join(steps)
     assert "shared_preload_libraries" in text and "restart" in text
@@ -197,7 +198,7 @@ def test_no_source_gives_steps_to_enable_pg_stat_statements() -> None:
 
 
 def test_steps_skip_what_is_already_done() -> None:
-    steps = " ".join(workload.enable_steps(installed=False, preloaded=True, azure=False))
+    steps = " ".join(pg_workload.enable_steps(installed=False, preloaded=True, azure=False))
 
     assert "shared_preload_libraries" not in steps
     assert "CREATE EXTENSION" in steps

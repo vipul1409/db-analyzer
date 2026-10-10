@@ -6,53 +6,44 @@ from datetime import datetime
 from typing import Any
 
 from db_analyzer.analyzers.inventory import schema_rollup
-from db_analyzer.core.model import Connection, Observation, Run, StorageStats, WorkloadReport
+from db_analyzer.core.model import StorageStats, WorkloadReport
+from db_analyzer.core.run_view import RunView
 from db_analyzer.core.units import format_bytes
 
 
-def markdown(
-    connection: Connection,
-    run: Run,
-    measured: list[StorageStats],
-    observations: list[Observation],
-    workload: WorkloadReport | None = None,
-) -> str:
-    """`observations` in rank order, most severe first (as the analyzer records them)."""
+def markdown(view: RunView) -> str:
+    run = view.run
     finished = run.finished_at.strftime("%Y-%m-%d %H:%M UTC") if run.finished_at else "-"
-    title = "Inventory" if "inventory" in run.scope else "Workload"
+    title = view.sections[0].capitalize() if view.sections else "Run"
     lines = [
-        f"# {title} report: {connection.name}",
+        f"# {title} report: {view.connection.name}",
         "",
         f"Run `{run.id}` · {run.status} · finished {finished}",
     ]
-    if "inventory" in run.scope:
-        lines += _inventory_tables(measured)
-    if workload is not None:
-        lines += _workload_section(workload)
-    ranked = sorted(measured, key=lambda s: (-s.total_bytes, s.ref.qualified))
-    if observations:
+    if view.storage is not None:
+        lines += _inventory_tables(view.storage)
+    if view.workload is not None:
+        lines += _workload_section(view.workload)
+    if view.observations:
         lines += ["", "## Findings", ""]
-        for rank, o in enumerate(observations, start=1):
+        for rank, o in enumerate(view.observations, start=1):
             lines.append(f"{rank}. **{o.severity}** `{o.fingerprint}`: {o.title}")
             if o.recommendation:
                 lines.append(f"   {o.recommendation}")
             if o.ddl:
                 lines.append(f"   `{o.ddl}`")
     skipped = [
-        f"- {analyzer}: {ref.qualified}: {why}"
-        for analyzer, items in run.skipped.items()
-        for ref, why in items
-    ] + [
-        f"- {s.ref.qualified}: {what.replace('_', ' ')} skipped: {why}"
-        for s in ranked
-        for what, why in s.skipped.items()
+        f"- {s.analyzer}: {s.collection}: {s.reason}"
+        if s.measurement is None
+        else f"- {s.collection}: {s.measurement.replace('_', ' ')} skipped: {s.reason}"
+        for s in view.skipped
     ]
     if skipped:
         lines += ["", "## Skipped", "", *skipped]
     return "\n".join(lines) + "\n"
 
 
-def _inventory_tables(measured: list[StorageStats]) -> list[str]:
+def _inventory_tables(ranked: list[StorageStats]) -> list[str]:
     lines = [
         "",
         "## Tables by size",
@@ -60,7 +51,6 @@ def _inventory_tables(measured: list[StorageStats]) -> list[str]:
         "| # | Table | Kind | Total | Heap | Indexes | TOAST | Rows | Last vacuum | Last analyze |",
         "|---:|---|---|---:|---:|---:|---:|---:|---|---|",
     ]
-    ranked = sorted(measured, key=lambda s: (-s.total_bytes, s.ref.qualified))
     for rank, s in enumerate(ranked, start=1):
         toast = format_bytes(s.toast_bytes) if s.toast_bytes is not None else "-"
         rows = "unknown" if s.row_count is None else f"{s.row_count:,} ({s.row_count_method})"
@@ -85,7 +75,7 @@ def _inventory_tables(measured: list[StorageStats]) -> list[str]:
         f"| {t.schema or '-'} | {t.collections} | {format_bytes(t.total_bytes)} "
         f"| {format_bytes(t.data_bytes)} | {format_bytes(t.index_bytes)} "
         f"| {format_bytes(t.toast_bytes)} | {t.share_of_total:.1%} |"
-        for t in schema_rollup(measured)
+        for t in schema_rollup(ranked)
     ]
     return lines
 
@@ -121,18 +111,13 @@ def _workload_section(w: WorkloadReport) -> list[str]:
     return lines
 
 
-def json_export(
-    connection: Connection,
-    run: Run,
-    measured: list[StorageStats],
-    observations: list[Observation],
-    workload: WorkloadReport | None = None,
-) -> str:
+def json_export(view: RunView) -> str:
     """Collections by name and Findings by fingerprint, keys sorted, one value per line: two
     exports line up, so a diff shows only what changed. Like the Markdown report, it holds what
     the Run saw, not Finding statuses, which change after the Run."""
+    run, workload = view.run, view.workload
     doc: dict[str, Any] = {
-        "connection": connection.name,
+        "connection": view.connection.name,
         "run": {
             "id": run.id,
             "status": run.status,
@@ -146,7 +131,7 @@ def json_export(
         },
         "collections": [
             {"collection": s.ref.qualified, **_without_ref(s)}
-            for s in sorted(measured, key=lambda s: s.ref.qualified)
+            for s in sorted(view.storage or [], key=lambda s: s.ref.qualified)
         ],
         "findings": [
             {
@@ -157,7 +142,7 @@ def json_export(
                 "recommendation": o.recommendation,
                 "ddl": o.ddl,
             }
-            for o in sorted(observations, key=lambda o: o.fingerprint)
+            for o in sorted(view.observations, key=lambda o: o.fingerprint)
         ],
     }
     if workload is not None:

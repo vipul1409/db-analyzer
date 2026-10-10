@@ -22,6 +22,10 @@ _Avoid_: Second connection
 One execution of one or more analyzers against a Connection over a recorded **scope** (which analyzers, which collections were actually measured), broad or targeted. A follow-up that only explains data already collected is not a Run.
 _Avoid_: Analysis (as a noun for the record), scan, turn
 
+**Analyzer**:
+One kind of analysis a Run can include (inventory, workload, later index advice and hotspot). It measures its own collections, so a Run's scope is kept per analyzer, and it **covers** the Finding categories it checks completely for every collection it measured: only a Run whose covering analyzer measured a Finding's collection, and did not see the Finding, asks "fixed?".
+_Avoid_: Check, scanner, module
+
 **Skipped collection**:
 A collection a Run planned to measure but did not (gate rejection, missing privilege). It is outside the Run's scope and makes the Run partial.
 _Avoid_: Failed table, excluded table

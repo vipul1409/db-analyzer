@@ -121,32 +121,6 @@ def no_source(steps: list[str]) -> WorkloadReport:
     )
 
 
-def enable_steps(installed: bool, preloaded: bool, azure: bool) -> list[str]:
-    """What to do, in order, to get pg_stat_statements working."""
-    steps = []
-    if not preloaded:
-        steps.append(
-            "Add pg_stat_statements to the server parameter shared_preload_libraries"
-            + (" (Azure portal: Server parameters), then restart the server." if azure else ",")
-            + ("" if azure else " then restart PostgreSQL: it is only read at startup.")
-        )
-    if not installed:
-        steps.append(
-            "In this database, as a role allowed to: CREATE EXTENSION pg_stat_statements;"
-            + (" On Azure, allow it in azure.extensions first." if azure else "")
-        )
-    steps.append(
-        "Let the analyzer role read other roles' statements: GRANT pg_read_all_stats TO "
-        "<analyzer role>; (pg_monitor includes it)."
-    )
-    steps.append(
-        "Optionally set pg_stat_statements.track = all (the default, top, skips statements "
-        "run inside functions) and track_io_timing = on."
-    )
-    steps.append("Rank the workload again after a day or so of normal traffic.")
-    return steps
-
-
 def _plannable(
     statements: Sequence[WorkloadStatement],
 ) -> tuple[list[WorkloadStatement], dict[str, int]]:

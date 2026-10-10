@@ -6,41 +6,20 @@ subject no longer exists is obsolete."""
 
 from dataclasses import replace
 
-from db_analyzer.core.model import AnalyzerName, Finding, FindingCategory, FindingStatus, Run
+from db_analyzer.core.model import Finding, FindingCategory, FindingStatus, Run
 
-# Which analyzer evaluates each category whose subject is one relation: a collection, or an
-# index on one. A Run covers such a Finding when that analyzer measured its collection; the
-# Finding is obsolete once the relation is gone. Categories not listed (queries, entities) are
-# never treated as covered yet: no "fixed?" prompt and no obsolete check until their analyzer
-# says what its scope covers.
-RELATION_CATEGORIES: dict[FindingCategory, AnalyzerName] = {
-    "size": "inventory",
-    "bloat": "inventory",
-    "stale_stats": "inventory",
-    "unused_index": "inventory",
-    "duplicate_index": "inventory",
-    "invalid_index": "inventory",
-}
-
-
-def is_ranking_fact(f: Finding) -> bool:
-    """A `size` Finding without a rule ranks a collection among the largest. It is a fact about
-    the Run, not a problem: dropping out of the top N is not a fix, so it never asks "fixed?"."""
-    return f.category == "size" and f.fingerprint == f"size:{f.subject}"
-
-
-def evaluated_by(f: Finding) -> AnalyzerName | None:
-    """The analyzer whose scope decides whether a Run's silence about `f` means something, or
-    None when it never does (ranking facts, categories not mapped yet)."""
-    return None if is_ranking_fact(f) else RELATION_CATEGORIES.get(f.category)
+# Categories whose subject is one relation: a collection, or an index on one. Such a Finding is
+# obsolete once the relation is gone. Others (queries, entities, proposed indexes) never are.
+RELATION_CATEGORIES: frozenset[FindingCategory] = frozenset(
+    {"size", "bloat", "stale_stats", "unused_index", "duplicate_index", "invalid_index"}
+)
 
 
 def covers(run: Run, f: Finding) -> bool:
-    """Whether `run` measured the subject's collection with the analyzer that evaluates `f`, so
-    not observing `f` means something. Skipped collections are outside the scope, so never
+    """Whether `run` measured the subject's collection with the analyzer that covers `f`, so not
+    observing `f` means something. Skipped collections are outside the scope, so never
     covered."""
-    analyzer = evaluated_by(f)
-    return analyzer is not None and f.collection in run.in_scope(analyzer)
+    return f.covered_by is not None and f.collection in run.in_scope(f.covered_by)
 
 
 def after_run(

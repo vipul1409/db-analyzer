@@ -98,6 +98,7 @@ class FindingRow(Base):
     last_seen_run: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     unobserved_by: Mapped[str | None] = mapped_column(String)  # the Run asking "fixed?"
     collection: Mapped[str | None] = mapped_column(String)
+    covered_by: Mapped[str | None] = mapped_column(String)  # analyzer, from the latest Run
 
 
 class ObservationRow(Base):

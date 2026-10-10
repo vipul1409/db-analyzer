@@ -5,7 +5,8 @@ from decimal import Decimal
 from typing import Any
 
 from db_analyzer.analyzers.inventory import schema_rollup
-from db_analyzer.core.model import Observation, ProbeResult, Run, StorageStats
+from db_analyzer.core.model import ProbeResult
+from db_analyzer.core.run_view import RunView
 from db_analyzer.core.units import format_bytes
 
 UNREADABLE_SHOWN = 10
@@ -28,17 +29,15 @@ def probe(p: ProbeResult) -> dict[str, Any]:
     }
 
 
-def storage(
-    run: Run, measured: list[StorageStats], observations: list[Observation], top_n: int
-) -> dict[str, Any]:
-    """`observations` in the analyzer's rank order; size facts are left to `largest`."""
-    ranked = sorted(measured, key=lambda s: (-s.total_bytes, s.ref.qualified))
-    total = sum(s.total_bytes for s in measured)
-    problems = [o for o in observations if o.severity != "info"]
+def storage(view: RunView, top_n: int) -> dict[str, Any]:
+    """Problems in rank order; size facts are left to `largest`."""
+    ranked = view.storage or []
+    total = sum(s.total_bytes for s in ranked)
+    problems = view.problems
     return {
-        "run_id": run.id,
-        "run_status": run.status,
-        "collections_measured": len(measured),
+        "run_id": view.run.id,
+        "run_status": view.run.status,
+        "collections_measured": len(ranked),
         "total_pretty": format_bytes(total),
         "findings": [
             {
@@ -58,7 +57,7 @@ def storage(
                 "total_pretty": format_bytes(t.total_bytes),
                 "share_of_total": t.share_of_total,
             }
-            for t in schema_rollup(measured)
+            for t in schema_rollup(ranked)
         ],
         "largest": [
             {
@@ -85,9 +84,8 @@ def storage(
         **_shown(
             "skipped",
             [
-                {"table": s.ref.qualified, "measurement": what, "reason": why}
-                for s in ranked
-                for what, why in s.skipped.items()
+                {"table": s.collection, "measurement": s.measurement, "reason": s.reason}
+                for s in view.skipped
             ],
         ),
         "row_counts": (
@@ -98,10 +96,11 @@ def storage(
     }
 
 
-def exact_counts(run: Run, measured: list[StorageStats]) -> dict[str, Any]:
+def exact_counts(view: RunView) -> dict[str, Any]:
+    measured = view.storage or []
     counted = [s for s in measured if s.row_count_method == "exact"]
     return {
-        "run_id": run.id,
+        "run_id": view.run.id,
         **_shown("counted", [{"table": s.ref.qualified, "rows": s.row_count} for s in counted]),
         **_shown(
             "skipped",

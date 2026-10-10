@@ -114,7 +114,7 @@ def test_the_same_statement_has_the_same_fingerprint_on_pg15_and_pg16() -> None:
             from db_analyzer.adapters.postgres import probe as pg_probe
 
             probe = pg_probe.probe(executor)
-            found = pg_workload.statements(executor, probe)
+            found = pg_workload.PG_STAT_STATEMENTS.read(executor, probe).statements
         return {
             q["match"]: workload.fingerprint(s.text)
             for q in SLOW
