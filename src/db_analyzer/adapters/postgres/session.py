@@ -7,6 +7,7 @@ our own session settings could mask a writable role), then harden the session.
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 from db_analyzer.core.model import ConnectionRefused, SessionLimits
 
@@ -24,6 +25,14 @@ def open_session(dsn: str, limits: SessionLimits) -> psycopg.Connection[Any]:
         conn.close()
         raise
     return conn
+
+
+def open_auxiliary_session(
+    dsn: str, database: str, limits: SessionLimits
+) -> psycopg.Connection[Any]:
+    """A session to another database on the same server (e.g. azure_sys), with the
+    Connection's credentials, checks and limits: only the database name differs."""
+    return open_session(make_conninfo(dsn, dbname=database), limits)
 
 
 def _refuse_unsupported_version(conn: psycopg.Connection[Any]) -> None:

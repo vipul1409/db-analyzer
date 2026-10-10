@@ -5,12 +5,17 @@ schema instead and say how to enable one (ADR 0010)."""
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
+import psycopg
+
 from db_analyzer.adapters.postgres import plans as pg_plans
 from db_analyzer.adapters.postgres import workload as pg_workload
 from db_analyzer.analyzers import workload
 from db_analyzer.analyzers.plan_rules import PlanContext
 from db_analyzer.core.model import (
+    ConnectionRefused,
     ProbeResult,
+    QueryCapReached,
+    QueryRejected,
     StatementPlan,
     WorkloadReading,
     WorkloadReport,
@@ -35,7 +40,7 @@ class Source(Protocol):
 
 # Preferred first: a Run reads the first one the Connection can, and with none, shows how to
 # enable the first.
-SOURCES: tuple[Source, ...] = (pg_workload.PG_STAT_STATEMENTS,)
+SOURCES: tuple[Source, ...] = (pg_workload.PG_STAT_STATEMENTS, pg_workload.QUERY_STORE)
 
 
 # Explains ranked statements: their plans by fingerprint, and the catalog context to read them.
@@ -47,8 +52,9 @@ Planner = Callable[
 def measure(
     ctx: RunContext, sources: Sequence[Source] = SOURCES, planner: Planner | None = None
 ) -> Collected:
-    """Ranks nothing when the statistics are younger than `min_stats_window`. A Run whose
-    workload was refused, or reviewed from the schema alone, is partial. `planner` explains the
+    """Ranks nothing when the statistics are younger than `min_stats_window`, or the source
+    looked readable but its read failed. A Run whose workload was refused, or reviewed from the
+    schema alone, is partial. `planner` explains the
     ranked statements (default: Postgres generic plans)."""
     executor, probe = ctx.executor, ctx.probe
     steps = [s.enable_steps(probe) for s in sources]
@@ -63,7 +69,17 @@ def measure(
             workload=workload.no_source(steps[0] if steps else []),
         )
     source = readable[0]
-    reading = source.read(executor, probe)
+    try:
+        reading = source.read(executor, probe)
+    except QueryCapReached:
+        raise  # ends the Turn's database work, not just this ranking
+    except (QueryRejected, ConnectionRefused, psycopg.Error) as e:
+        return Collected(
+            found=[],
+            scope=None,
+            complete=False,
+            workload=workload.unreadable(source.name, str(e).strip()),
+        )
     report = workload.report(
         reading.statements,
         source=source.name,

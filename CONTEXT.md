@@ -15,7 +15,7 @@ Something the analyzer can do on a Connection, such as measuring storage or read
 _Avoid_: Feature, permission
 
 **Auxiliary session**:
-An internal session a Connection opens to a second database it needs (e.g. `azure_sys` for Query Store), using the Connection's credentials and limits.
+An internal session a Connection opens to a second database it needs (e.g. `azure_sys` for Query Store), using the Connection's credentials and limits. Its statements are the Connection's: audited under it and counted against the same query cap.
 _Avoid_: Second connection
 
 **Run**:
@@ -35,7 +35,7 @@ One measurement a Run planned for a collection it did measure, but did not take 
 _Avoid_: Skipped collection (the collection was measured), failed count
 
 **Workload source**:
-Where a Connection's record of executed statements comes from (`pg_stat_statements`, later Azure Query Store). The workload analyzer ranks its statements; a source's statistics cover only the time since it was last reset, its **stats window**, and are not ranked when that is too short.
+Where a Connection's record of executed statements comes from (`pg_stat_statements`, or Azure Query Store when that is missing). The workload analyzer ranks its statements; a source's statistics cover only the time since it was last reset, or for Query Store since the oldest interval it still keeps, its **stats window**, and are not ranked when that is too short.
 _Avoid_: Query log, slow log
 
 **Generic plan**:

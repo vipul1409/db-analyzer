@@ -19,7 +19,7 @@ from db_analyzer import report, runs
 from db_analyzer.adapters import postgres as pg
 from db_analyzer.adapters.postgres import probe as pg_probe
 from db_analyzer.adapters.postgres.queries import LIBRARY
-from db_analyzer.adapters.postgres.session import open_session
+from db_analyzer.adapters.postgres.session import open_auxiliary_session, open_session
 from db_analyzer.adapters.sql_common.templates import run_template
 from db_analyzer.agent import digest
 from db_analyzer.agent.events import (
@@ -404,9 +404,20 @@ class AnalyzerService:
             if on_sql is not None:
                 on_sql(entry)
 
+        def auxiliary(database: str) -> psycopg.Connection[Any]:
+            return open_auxiliary_session(dsn, database, connection.limits)
+
         with open_session(dsn, connection.limits) as conn:
             # No column is a confirmed entity key until entity maps exist.
-            yield SafeExecutor(conn, connection.id, audit, connection.gate, budget, thread_id)
+            yield SafeExecutor(
+                conn,
+                connection.id,
+                audit,
+                connection.gate,
+                budget,
+                thread_id,
+                open_auxiliary=auxiliary,
+            )
 
 
 class AgentTurn:

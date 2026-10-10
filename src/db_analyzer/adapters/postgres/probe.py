@@ -15,12 +15,22 @@ ADVICE_SETTINGS = (
     "work_mem",
 )
 
+# Azure Query Store's settings, read with current_setting: pg_settings may not list them.
+QUERY_CAPTURE_MODE = "pg_qs.query_capture_mode"  # none, top or all
+MAX_QUERY_TEXT_LENGTH = "pg_qs.max_query_text_length"  # longer statement text is cut off
+QUERY_STORE_SETTINGS = (QUERY_CAPTURE_MODE, MAX_QUERY_TEXT_LENGTH)
+
 _SERVER = """
 SELECT current_setting('server_version_num')::int AS version_num,
        current_setting('server_version') AS version,
        pg_is_in_recovery() AS in_recovery,
-       current_setting('azure.extensions', true) AS azure_extensions
-"""
+       current_setting('azure.extensions', true) AS azure_extensions,
+       {query_store}
+""".format(
+    query_store=",\n       ".join(
+        f"current_setting('{name}', true) AS \"{name}\"" for name in QUERY_STORE_SETTINGS
+    )
+)
 
 _EXTENSIONS = """
 SELECT e.extname, e.extversion, n.nspname AS schema
@@ -29,7 +39,10 @@ FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
 
 _ROLES = """
 SELECT pg_has_role(current_user, 'pg_monitor', 'MEMBER') AS pg_monitor,
-       pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') AS pg_read_all_stats
+       pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') AS pg_read_all_stats,
+       EXISTS (SELECT 1 FROM pg_database d
+               WHERE d.datname = 'azure_sys' AND has_database_privilege(d.oid, 'CONNECT'))
+         AS azure_sys_connect
 """
 
 _TABLES = """
@@ -97,8 +110,10 @@ def probe(executor: SafeExecutor) -> ProbeResult:
             pg_read_all_stats=bool(roles["pg_read_all_stats"]),
             readable_tables=sum(1 for t in tables if t["readable"]),
             unreadable_tables=[str(t["name"]) for t in tables if not t["readable"]],
+            azure_sys_connect=bool(roles["azure_sys_connect"]),
         ),
-        settings={name: settings_rows.get(name) for name in ADVICE_SETTINGS},
+        settings={name: settings_rows.get(name) for name in ADVICE_SETTINGS}
+        | {name: _str(server[name]) for name in QUERY_STORE_SETTINGS},
         stats=StatsFreshness(
             database_stats_reset=_dt(run(_DATABASE_STATS)[0]["stats_reset"]),
             statements_stats_reset=_dt(statements_reset),
@@ -112,6 +127,10 @@ def probe(executor: SafeExecutor) -> ProbeResult:
 
 def _ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+def _str(value: object) -> str | None:
+    return None if value is None else str(value)
 
 
 def _int(value: object) -> int:

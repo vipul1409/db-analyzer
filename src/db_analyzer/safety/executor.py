@@ -4,13 +4,15 @@ query cap → guard → privacy check (LLM SQL) → read-only transaction (alway
 EXPLAIN gate (unless the guard exempts the statement) → execute → result filter → audit. The
 guard profile follows from the method called: `execute` for vetted templates and workload text,
 `execute_agent` for SQL the LLM wrote. Only LLM SQL passes the privacy filter here; templates
-pass on their declared columns only (adapters/sql_common/templates.py).
+pass on their declared columns only (adapters/sql_common/templates.py). An auxiliary session
+to a second database (`auxiliary`) runs through the same pipeline, cap and audit.
 """
 
 import contextlib
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,6 +33,8 @@ from db_analyzer.safety import guard, privacy
 
 Row = dict[str, Any]
 AuditSink = Callable[[AuditEntry], None]
+# Opens a hardened session to another database with the Connection's credentials and limits.
+AuxiliaryOpener = Callable[[str], AbstractContextManager[psycopg.Connection[Any]]]
 
 MAX_QUERIES_PER_TURN = 50
 
@@ -65,7 +69,10 @@ class SafeExecutor:
         budget: QueryBudget | None = None,
         thread_id: str | None = None,
         entity_keys: frozenset[EntityKey] = frozenset(),
+        open_auxiliary: AuxiliaryOpener | None = None,
+        database: str | None = None,
     ):
+        """`database` names the database of an auxiliary session; its audit entries say so."""
         self._conn = conn
         self._connection_id = connection_id
         self._audit = audit
@@ -73,11 +80,32 @@ class SafeExecutor:
         self._budget = budget
         self._thread_id = thread_id
         self._entity_keys = entity_keys
+        self._open_auxiliary = open_auxiliary
+        self._database = database
 
     @property
     def server_version_num(self) -> int:
         """From the connection handshake: no statement is run."""
         return self._conn.info.server_version
+
+    @contextlib.contextmanager
+    def auxiliary(self, database: str) -> Iterator["SafeExecutor"]:
+        """An auxiliary session: a second database the Connection needs (e.g. `azure_sys` for
+        Query Store), opened with its credentials and limits. Its statements pass the same
+        guard, gate and query cap, and are audited under the same Connection and Thread."""
+        if self._open_auxiliary is None:
+            raise RuntimeError(f"this executor cannot open auxiliary sessions ({database})")
+        with self._open_auxiliary(database) as conn:
+            yield SafeExecutor(
+                conn,
+                self._connection_id,
+                self._audit,
+                self._gate,
+                self._budget,
+                self._thread_id,
+                self._entity_keys,
+                database=database,
+            )
 
     def execute(self, sql: str, purpose: str) -> list[Row]:
         """Run vetted SQL (templates, verbatim workload text) under the internal profile."""
@@ -179,7 +207,7 @@ class SafeExecutor:
         self._audit(
             AuditEntry(
                 connection_id=self._connection_id,
-                purpose=purpose,
+                purpose=purpose if self._database is None else f"{purpose} ({self._database})",
                 sql=sql,
                 decision=decision,
                 reason=reason,

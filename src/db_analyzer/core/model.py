@@ -45,6 +45,7 @@ class Privileges:
     pg_read_all_stats: bool
     readable_tables: int
     unreadable_tables: list[str]
+    azure_sys_connect: bool = False  # may open an auxiliary session to azure_sys (Query Store)
 
 
 @dataclass(frozen=True)
@@ -189,7 +190,7 @@ class IndexStats:
     nulls_not_distinct: bool = False  # a unique index that treats NULLs as equal
 
 
-WorkloadSource = Literal["pg_stat_statements"]
+WorkloadSource = Literal["pg_stat_statements", "azure_query_store"]
 
 
 @dataclass(frozen=True)

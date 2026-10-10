@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
+import psycopg
 import pytest
 
 from db_analyzer import runs
@@ -14,6 +15,8 @@ from db_analyzer.core.model import (
     Observed,
     Privileges,
     ProbeResult,
+    QueryCapReached,
+    QueryRejected,
     StatsFreshness,
     WorkloadReading,
     WorkloadSource,
@@ -141,12 +144,15 @@ class FakeSource:
     steps: list[str] = field(default_factory=list)
     stats_reset: datetime | None = NOW - timedelta(days=3)
     reads: int = 0
+    fails: Exception | None = None
 
     def enable_steps(self, probe: ProbeResult) -> list[str]:
         return self.steps
 
     def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading:
         self.reads += 1
+        if self.fails is not None:
+            raise self.fails
         statement = WorkloadStatement(SQL, 10, 100.0, 10, 0, 0)
         return WorkloadReading([statement], self.stats_reset)
 
@@ -179,6 +185,28 @@ def test_statistics_younger_than_the_window_are_refused_and_measure_nothing() ->
 
     assert c.workload is not None and c.workload.refused is not None
     assert c.found == [] and c.scope is None and not c.complete
+
+
+def test_a_source_that_cannot_be_read_refuses_the_ranking_with_the_reason() -> None:
+    denied = psycopg.errors.InsufficientPrivilege("permission denied for view qs_view")
+
+    c = collect(FakeSource(name="azure_query_store", fails=denied))
+
+    assert c.workload is not None and c.workload.source == "azure_query_store"
+    assert c.workload.refused is not None and "permission denied" in c.workload.refused
+    assert c.workload.warnings[0] == c.workload.refused
+    assert c.found == [] and c.scope is None and not c.complete
+
+
+def test_a_source_the_gate_refuses_refuses_the_ranking_too() -> None:
+    c = collect(FakeSource(fails=QueryRejected("planned cost 9e6 exceeds 2e6")))
+
+    assert c.workload is not None and "planned cost" in (c.workload.refused or "")
+
+
+def test_the_query_cap_still_ends_the_turn() -> None:
+    with pytest.raises(QueryCapReached):
+        collect(FakeSource(fails=QueryCapReached(50)))
 
 
 # --- Coverage, declared by the analyzer -------------------------------------------------------

@@ -104,7 +104,8 @@ def analyze(
             "--analyzer",
             "-a",
             help="What to analyse: inventory (sizes, index health) or workload (the most "
-            "expensive statements, from pg_stat_statements). Repeat for both. Default: inventory.",
+            "expensive statements, from pg_stat_statements, else Azure Query Store). Repeat for "
+            "both. Default: inventory.",
         ),
     ] = None,
     min_stats_window: Annotated[
@@ -499,6 +500,12 @@ def _render_probe(name: str, p: ProbeResult) -> None:
     table.add_row("Statistics reset", _age(p.stats.database_stats_reset))
     if "pg_stat_statements" in p.extensions:
         table.add_row("Statement stats reset", _age(p.stats.statements_stats_reset))
+    if p.host_type == "azure_flexible":
+        capture = p.settings.get("pg_qs.query_capture_mode") or "none"
+        connect = (
+            "CONNECT on azure_sys" if p.privileges.azure_sys_connect else "no CONNECT on azure_sys"
+        )
+        table.add_row("Query Store", f"capture {capture}, {connect}")
     table.add_row(
         "Never analyzed tables",
         str(p.stats.never_analyzed_tables) if p.stats.never_analyzed_tables else "none",

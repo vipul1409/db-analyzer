@@ -125,7 +125,8 @@ def build_agent(
                 "Analyses the workload: ranks the slowest statements (total and mean time, "
                 "blocks read, temp files) and explains each from its plan; answers follow-ups "
                 "about a ranked statement from the latest ranking without ranking again. "
-                "Without pg_stat_statements, reviews the schema instead.",
+                "Without a workload source (pg_stat_statements, Azure Query Store), reviews the "
+                "schema instead.",
                 WORKLOAD_PROMPT,
                 WORKLOAD_TOOLS,
             )

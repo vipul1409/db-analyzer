@@ -90,7 +90,7 @@ def _workload_section(w: WorkloadReport) -> list[str]:
         return lines
     reset = "-" if w.stats_reset is None else w.stats_reset.strftime("%Y-%m-%d %H:%M UTC")
     lines.append(
-        f"Source: {w.source} · statistics reset {reset} · {w.statements:,} statements, "
+        f"Source: {w.source} · statistics since {reset} · {w.statements:,} statements, "
         f"{w.total_ms / 1000:,.1f} s in total"
     )
     lines += [f"- Warning: {warning}" for warning in w.warnings]

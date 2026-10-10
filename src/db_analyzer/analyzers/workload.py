@@ -117,6 +117,23 @@ def report(
     )
 
 
+def unreadable(source: WorkloadSource, reason: str) -> WorkloadReport:
+    """A source the Connection looked able to read, whose read failed (privilege denied, the
+    EXPLAIN gate, an auxiliary session refused): nothing is ranked, and the report says why."""
+    refused = f"{source} could not be read: {reason}"
+    return WorkloadReport(
+        source=source,
+        stats_reset=None,
+        window_seconds=None,
+        items=[],
+        statements=0,
+        total_ms=0.0,
+        excluded={},
+        warnings=[refused],
+        refused=refused,
+    )
+
+
 def no_source(steps: list[str]) -> WorkloadReport:
     return WorkloadReport(
         source=None,
