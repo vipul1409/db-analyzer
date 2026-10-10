@@ -21,6 +21,9 @@ You analyse one PostgreSQL database for an engineer, through read-only tools and
   vacuum/analyze, TOAST, index size, row counts, "analyse storage") go to the
   inventory-analyst subagent through the task tool. Pass on the user's question and any tables
   they named; ask for exact row counts only when the user wants them.
+- Slow-query questions ("what's slow?", the most expensive queries, the workload) go to the
+  workload-analyst subagent. So do follow-ups about a statement it ranked ("why is query #3
+  slow?"): pass on the rank and say to read the latest ranking, not to rank again.
 - Every number in your answer comes from a tool or subagent result in this conversation. Never
   estimate. Quote sizes exactly as given.
 - Prefer the dedicated tools and subagents. Use run_readonly_sql only for what they do not
@@ -46,6 +49,28 @@ answers the user from your report.
   If a tool returns an error, report it; do not fill the gap.
 """
 INVENTORY_TOOLS = ("probe", "get_storage_stats", "count_rows_exact")
+
+WORKLOAD_ANALYST = "workload-analyst"
+WORKLOAD_PROMPT = """\
+You are the workload analyst for one PostgreSQL database. You report to an orchestrator, who
+answers the user from your report.
+
+- For "what's slow?" and other questions about the workload as a whole, call get_top_queries
+  once (top_n 10 unless asked otherwise). It records a workload Run and returns the statements
+  ranked by total time, numbered by rank, each explained by the plan rules that fired.
+- For a question about one statement already ranked ("why is query #3 slow?"), call
+  get_query_details with its rank. Never call get_top_queries for it: re-ranking makes a new
+  Run and changes the numbers.
+- Report each statement as: #rank, its statement text, total time, calls, mean ms and share of
+  time, then why it is slow in the words of `explanation`, quoting the plan node a rule names.
+  A statement with no plan rule fired: say the plan shows no single cause. A plan that covers
+  only the row lookup of a write: say so.
+- If the ranking was refused (statistics too recent) or there is no workload source, report
+  the reason, the warnings and the steps to enable one, then the schema review findings.
+- Use only numbers from tool results, exactly as given. If a tool returns an error, report
+  it; do not fill the gap.
+"""
+WORKLOAD_TOOLS = ("get_top_queries", "get_query_details")
 ORCHESTRATOR_TOOLS = ("probe", "run_readonly_sql")
 
 # No shell, and no catch-all subagent that would inherit every tool (ADR 0003). Process-wide.
@@ -70,21 +95,40 @@ def build_agent(
     (turn limits, strict schemas, gateway); `orchestrator_only` goes before it on the
     orchestrator alone (e.g. per-turn resets)."""
     by_name = {t.name: t for t in tools}
+
+    def subagent(name: str, description: str, prompt: str, owned: Sequence[str]) -> SubAgent:
+        return {
+            "name": name,
+            "description": description,
+            "system_prompt": prompt,
+            "tools": [by_name[n] for n in owned if n in by_name],
+            "model": model,
+            "middleware": list(middleware),
+        }
+
     subagents: list[SubAgent] = []
     if "get_storage_stats" in by_name:
         subagents.append(
-            {
-                "name": INVENTORY_ANALYST,
-                "description": (
-                    "Analyses storage: table and schema sizes, partitions, row counts (exact "
-                    "on request), vacuum/analyze recency, bloat, stale statistics, index-heavy "
-                    "tables and oversized TOAST. Returns ranked findings with the numbers."
-                ),
-                "system_prompt": INVENTORY_PROMPT,
-                "tools": [by_name[n] for n in INVENTORY_TOOLS if n in by_name],
-                "model": model,
-                "middleware": list(middleware),
-            }
+            subagent(
+                INVENTORY_ANALYST,
+                "Analyses storage: table and schema sizes, partitions, row counts (exact on "
+                "request), vacuum/analyze recency, bloat, stale statistics, index-heavy tables "
+                "and oversized TOAST. Returns ranked findings with the numbers.",
+                INVENTORY_PROMPT,
+                INVENTORY_TOOLS,
+            )
+        )
+    if "get_top_queries" in by_name:
+        subagents.append(
+            subagent(
+                WORKLOAD_ANALYST,
+                "Analyses the workload: ranks the slowest statements (total and mean time, "
+                "blocks read, temp files) and explains each from its plan; answers follow-ups "
+                "about a ranked statement from the latest ranking without ranking again. "
+                "Without pg_stat_statements, reviews the schema instead.",
+                WORKLOAD_PROMPT,
+                WORKLOAD_TOOLS,
+            )
         )
     return create_deep_agent(
         model=model,

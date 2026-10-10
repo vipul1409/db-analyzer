@@ -8,14 +8,17 @@ run for real. Re-record after changing prompts, tools or the model:
 """
 
 import asyncio
+import json
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from db_analyzer.agent import digest
 from db_analyzer.agent.events import (
     AgentEvent,
     Done,
@@ -33,9 +36,11 @@ from db_analyzer.core.model import Connection
 from db_analyzer.core.units import format_bytes
 from db_analyzer.service import AnalyzerService
 from tests.fixtures.dataset import GROUND_TRUTH
+from tests.grounding import ungrounded
 
 from .conftest import SUPPORTED, seeded_dsn
 from .test_inventory_run import STORAGE_CATEGORIES
+from .test_workload import ANY_WINDOW
 
 CASSETTES = Path(__file__).parents[1] / "cassettes"
 RECORDED_ON = 17  # cassettes were recorded against this fixture; sizes in answers depend on it
@@ -55,8 +60,9 @@ class Agent:
     connection: Connection
 
     def service(self) -> AnalyzerService:
-        """A fresh service on the same home: what a new process would see."""
-        return AnalyzerService(home=self.home, llm=self.settings)
+        """A fresh service on the same home: what a new process would see. The seed reset the
+        workload statistics minutes ago: workload Runs rank them anyway."""
+        return AnalyzerService(home=self.home, llm=self.settings, min_stats_window=ANY_WINDOW)
 
 
 @pytest.fixture
@@ -69,7 +75,7 @@ def agent(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.Mo
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)  # replay must not need the network
     limits = getattr(request, "param", {})
     settings = LLMSettings(model="gpt-5.4-mini", cassette=cassette, record=RECORDING, **limits)
-    service = AnalyzerService(home=tmp_path, llm=settings)
+    service = AnalyzerService(home=tmp_path, llm=settings, min_stats_window=ANY_WINDOW)
     connection = service.add_connection("shop", dsn_env="DBX_TEST_SHOP_DSN")
     return Agent(tmp_path, settings, connection)
 
@@ -222,3 +228,71 @@ def test_tool_call_limit_stops_the_tool_and_ends_the_turn(agent: Agent) -> None:
     [limit] = of(events, LimitReached)
     assert limit.limit == "tool_calls"
     assert isinstance(events[-1], Done)
+
+
+@pytest.fixture
+def workload_results(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[], list[str]]:
+    """What the workload tools returned while the cassette was recorded. Timings differ on every
+    seed, so replay checks the recorded answer against the recorded results, kept alongside."""
+    path = CASSETTES / request.node.name / "tool-results.json"
+    live: list[str] = []
+
+    def capturing(f: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+        def capture(*args: Any) -> dict[str, Any]:
+            result = f(*args)
+            live.append(json.dumps(result))
+            return result
+
+        return capture
+
+    monkeypatch.setattr(digest, "top_queries", capturing(digest.top_queries))
+    monkeypatch.setattr(digest, "query_details", capturing(digest.query_details))
+
+    def results() -> list[str]:
+        if RECORDING:
+            path.write_text(json.dumps(live, indent=1) + "\n")
+            return live
+        recorded: list[str] = json.loads(path.read_text())
+        return recorded
+
+    return results
+
+
+def test_whats_slow_ranks_the_workload_and_a_follow_up_reuses_it(
+    agent: Agent, workload_results: Callable[[], list[str]]
+) -> None:
+    service = agent.service()
+    thread = service.start_thread(agent.connection.id)
+
+    events = turn(service, thread.id, "What's slow?")
+
+    assert not of(events, Error)
+    started = of(events, ToolStarted)
+    [task] = [t for t in started if t.name == "task"]
+    assert task.args["subagent_type"] == "workload-analyst"
+    assert "get_top_queries" in [t.name for t in started]
+    [run] = of(events, RunFinished)
+    report = service.workload(run.run_id)
+    assert report is not None and report.items, "a workload Run ranked the statements"
+    ranking = of(events, Done)[0].answer
+    assert "bookings" in ranking and "events" in ranking
+    assert "scan" in ranking.lower() and "sort" in ranking.lower(), "explained by the plan rules"
+
+    runs, audited = service.runs(agent.connection.id), service.audit(agent.connection.id)
+    events = turn(service, thread.id, "Why is query #3 slow?")
+
+    assert not of(events, Error)
+    started = of(events, ToolStarted)
+    assert [t.args for t in started if t.name == "get_query_details"] == [{"rank": 3}]
+    assert "get_top_queries" not in [t.name for t in started], "no re-ranking"
+    assert not of(events, RunFinished) and not of(events, SqlExecuted)
+    assert service.runs(agent.connection.id) == runs, "a follow-up is not a Run"
+    assert service.audit(agent.connection.id) == audited, "and sends no SQL"
+    why = of(events, Done)[0].answer
+    assert why
+
+    results = workload_results()
+    assert ungrounded(ranking, results) == set(), ranking
+    assert ungrounded(why, results) == set(), why

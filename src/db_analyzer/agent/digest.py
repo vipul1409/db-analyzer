@@ -5,14 +5,15 @@ from decimal import Decimal
 from typing import Any
 
 from db_analyzer.analyzers.inventory import schema_rollup
-from db_analyzer.core.model import ProbeResult
+from db_analyzer.core.model import Observation, ProbeResult, WorkloadItem
 from db_analyzer.core.run_view import RunView
-from db_analyzer.core.units import format_bytes
+from db_analyzer.core.units import BLOCK_BYTES, format_bytes, format_duration
 
 UNREADABLE_SHOWN = 10
 SQL_ROWS_SHOWN = 50
 FINDINGS_SHOWN = 20
 COUNTS_SHOWN = 50
+STATEMENT_CHARS = 300
 
 
 def probe(p: ProbeResult) -> dict[str, Any]:
@@ -110,6 +111,115 @@ def exact_counts(view: RunView) -> dict[str, Any]:
                 if "exact_count" in s.skipped
             ],
         ),
+    }
+
+
+def top_queries(view: RunView, top_n: int) -> dict[str, Any]:
+    """The workload ranking, costliest first, numbered so follow-ups can name a statement; or,
+    without one, why not and the schema review made instead."""
+    w = view.workload
+    assert w is not None, "a workload Run"
+    by_fingerprint = {o.fingerprint: o for o in view.observations}
+    return {
+        "run_id": view.run.id,
+        "run_status": view.run.status,
+        "source": w.source,
+        "statistics_cover": None if w.window_seconds is None else format_duration(w.window_seconds),
+        "statements": w.statements,
+        "total_ms": round(w.total_ms, 1),
+        **({"refused": w.refused} if w.refused else {}),
+        **({"warnings": w.warnings} if w.warnings else {}),
+        **({"enable_steps": w.enable_steps} if w.enable_steps else {}),
+        "ranked": len(w.items),
+        "queries": [
+            _ranked(rank, i, by_fingerprint[f"slow_query:{i.fingerprint}"])
+            for rank, i in enumerate(w.items[:top_n], start=1)
+        ],
+        **(
+            {
+                "schema_review": [
+                    {
+                        "severity": o.severity,
+                        "finding": o.fingerprint,
+                        "title": o.title,
+                        "recommendation": o.recommendation,
+                        "ddl": o.ddl,
+                    }
+                    for o in view.problems[:FINDINGS_SHOWN]
+                ]
+            }
+            if w.source is None
+            else {}
+        ),
+        "ranking": (
+            "rank 1 = most total time; ranked_by = which rankings (total time, mean time, "
+            "blocks read, temp blocks written) it is in the top 25 of"
+        ),
+    }
+
+
+def _ranked(rank: int, i: WorkloadItem, o: Observation) -> dict[str, Any]:
+    statement = i.text
+    if len(statement) > STATEMENT_CHARS:
+        statement = statement[: STATEMENT_CHARS - 1] + "…"
+    return {
+        "rank": rank,
+        "severity": o.severity,
+        "finding": o.fingerprint,
+        "statement": statement,
+        **_statement_stats(i, o),
+        "plan_rules": [r["rule"] for r in o.evidence.get("plan_rules", [])],
+        "explanation": o.recommendation,
+    }
+
+
+def _statement_stats(i: WorkloadItem, o: Observation) -> dict[str, Any]:
+    skipped = o.evidence.get("plan_skipped")
+    return {
+        "calls": i.calls,
+        "total_ms": round(i.total_ms, 1),
+        "mean_ms": round(i.mean_ms, 2),
+        "share_of_time": f"{i.share_of_time:.1%}",
+        "ranked_by": i.ranked_by,
+        **({"plan_skipped": skipped} if skipped else {}),
+    }
+
+
+def query_details(view: RunView, rank: int) -> dict[str, Any]:
+    """One statement of a workload Run's ranking, with its plan and the plan rules that fired."""
+    w = view.workload
+    assert w is not None, "a workload Run"
+    if w.refused:
+        return {
+            "run_id": view.run.id,
+            "error": f"the latest workload Run ranked nothing: {w.refused}",
+        }
+    if not 1 <= rank <= len(w.items):
+        return {
+            "run_id": view.run.id,
+            "error": f"rank {rank} is not in the latest ranking, of {len(w.items)} statements",
+        }
+    i = w.items[rank - 1]
+    [o] = [o for o in view.observations if o.fingerprint == f"slow_query:{i.fingerprint}"]
+    e = o.evidence
+    return {
+        "run_id": view.run.id,
+        "ranked_at": view.run.started_at.isoformat(timespec="minutes"),
+        "rank": rank,
+        "of": len(w.items),
+        "severity": o.severity,
+        "finding": o.fingerprint,
+        "title": o.title,
+        "text": i.text,
+        **_statement_stats(i, o),
+        "rows": i.rows,
+        "read_from_outside_shared_buffers": format_bytes(i.shared_blks_read * BLOCK_BYTES),
+        "temp_files_written": format_bytes(i.temp_blks_written * BLOCK_BYTES),
+        "plan": e.get("plan", []),
+        "row_lookup_only": e.get("row_lookup_only", False),
+        "plan_rules": e.get("plan_rules", []),
+        "explanation": o.recommendation,
+        "plan_estimates": "a generic plan: the planner's estimates, nothing was executed",
     }
 
 

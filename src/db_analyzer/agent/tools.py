@@ -23,6 +23,10 @@ class TurnBackend(Protocol):
 
     def sql(self, sql: str, purpose: str) -> dict[str, Any]: ...
 
+    def top_queries(self, top_n: int) -> dict[str, Any]: ...
+
+    def query_details(self, rank: int) -> dict[str, Any]: ...
+
 
 class NoArgs(BaseModel):
     pass
@@ -40,6 +44,14 @@ class CountArgs(BaseModel):
     all_tables: bool = Field(
         description="Count every table instead of `tables` (only when the user asks for all)"
     )
+
+
+class TopQueriesArgs(BaseModel):
+    top_n: int = Field(ge=1, le=25, description="How many statements to list, costliest first")
+
+
+class QueryArgs(BaseModel):
+    rank: int = Field(ge=1, description="The statement's rank in the latest get_top_queries")
 
 
 class SqlArgs(BaseModel):
@@ -102,13 +114,43 @@ def _sql(backend: TurnBackend) -> BaseTool:
     )
 
 
-_FACTORIES: dict[Capability, Callable[[TurnBackend], BaseTool]] = {
-    Capability.PROBE: _probe,
-    Capability.STORAGE_STATS: _storage,
-    Capability.EXACT_COUNTS: _count,
-    Capability.READONLY_SQL: _sql,
-}
+def _top_queries(backend: TurnBackend) -> BaseTool:
+    return StructuredTool.from_function(
+        func=lambda top_n: json.dumps(backend.top_queries(top_n)),
+        name="get_top_queries",
+        description=(
+            "Find the slow statements: rank the workload source's statements by total time, "
+            "mean time, blocks read and temp blocks written, and explain each from its generic "
+            "plan, recorded as a workload Run. Returns the top_n, numbered by rank, each with "
+            "why it is slow. Without a workload source, returns a schema review and how to "
+            "enable one instead."
+        ),
+        args_schema=TopQueriesArgs,
+    )
+
+
+def _query_details(backend: TurnBackend) -> BaseTool:
+    return StructuredTool.from_function(
+        func=lambda rank: json.dumps(backend.query_details(rank)),
+        name="get_query_details",
+        description=(
+            "Everything the latest workload Run recorded about the statement at `rank`: its "
+            "full text, statistics, generic plan and the plan rules that fired. Reads data "
+            "already collected; sends nothing to the database and makes no Run."
+        ),
+        args_schema=QueryArgs,
+    )
+
+
+_FACTORIES: list[tuple[Capability, Callable[[TurnBackend], BaseTool]]] = [
+    (Capability.PROBE, _probe),
+    (Capability.STORAGE_STATS, _storage),
+    (Capability.EXACT_COUNTS, _count),
+    (Capability.READONLY_SQL, _sql),
+    (Capability.WORKLOAD, _top_queries),
+    (Capability.WORKLOAD, _query_details),
+]
 
 
 def build_tools(backend: TurnBackend, capabilities: frozenset[Capability]) -> list[BaseTool]:
-    return [factory(backend) for cap, factory in _FACTORIES.items() if cap in capabilities]
+    return [factory(backend) for cap, factory in _FACTORIES if cap in capabilities]

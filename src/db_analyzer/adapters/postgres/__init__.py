@@ -8,5 +8,6 @@ CAPABILITIES = frozenset(
         Capability.STORAGE_STATS,
         Capability.EXACT_COUNTS,
         Capability.READONLY_SQL,
+        Capability.WORKLOAD,
     }
 )

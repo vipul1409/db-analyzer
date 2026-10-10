@@ -79,6 +79,7 @@ class Capability(StrEnum):
     STORAGE_STATS = "storage_stats"
     EXACT_COUNTS = "exact_counts"  # count(*) per table, where the EXPLAIN gate allows
     READONLY_SQL = "readonly_sql"  # ad-hoc SQL under the agent guard profile and privacy filter
+    WORKLOAD = "workload"  # rank a workload source's statements, or review the schema without one
 
 
 @dataclass(frozen=True)

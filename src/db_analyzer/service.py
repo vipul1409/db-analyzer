@@ -82,10 +82,18 @@ def default_home() -> Path:
 
 
 class AnalyzerService:
-    def __init__(self, home: Path | None = None, llm: LLMSettings | None = None):
+    def __init__(
+        self,
+        home: Path | None = None,
+        llm: LLMSettings | None = None,
+        min_stats_window: timedelta = workload.MIN_STATS_WINDOW,
+    ):
+        """`min_stats_window` is the youngest workload statistics the agent's workload Runs
+        rank (a deterministic Run takes its own)."""
         self._home = home or default_home()
         self._store = Store(self._home / "db-analyzer.sqlite")
         self._llm = llm or LLMSettings.from_env()
+        self.min_stats_window = min_stats_window
 
     def add_connection(
         self,
@@ -471,8 +479,40 @@ class AgentTurn:
             )
         )
 
+    def top_queries(self, top_n: int) -> dict[str, Any]:
+        def rank(emit: Callable[[Any], None]) -> dict[str, Any]:
+            run = self._service.run(
+                self._thread.connection_id,
+                ["workload"],
+                self._thread.id,
+                self._budget,
+                _sql_events(emit),
+                min_stats_window=self._service.min_stats_window,
+            )
+            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
+            return digest.top_queries(self._service.run_view(run.id), top_n)
+
+        return self._guarded(rank)
+
+    def query_details(self, rank: int) -> dict[str, Any]:
+        """From the Thread's latest workload Run, else the Connection's: no SQL, no Run."""
+        run = self._latest_workload_run()
+        if run is None:
+            return {"error": "no workload Run yet: call get_top_queries first"}
+        return digest.query_details(self._service.run_view(run.id), rank)
+
+    def _latest_workload_run(self) -> Run | None:
+        connections: Run | None = None
+        for r in reversed(self._service.runs(self._thread.connection_id)):
+            ours = r.thread_id == self._thread.id
+            if (ours or connections is None) and self._service.workload(r.id) is not None:
+                if ours:
+                    return r
+                connections = r
+        return connections
+
     def _guarded(self, work: Callable[[Callable[[Any], None]], dict[str, Any]]) -> dict[str, Any]:
-        emit = get_stream_writer()
+        emit = _stream_writer()
         try:
             return work(emit)
         except QueryCapReached as e:
@@ -495,6 +535,15 @@ class NewTurn(AgentMiddleware[Any, Any, Any]):
 
     def before_agent(self, state: Any, runtime: Any) -> None:
         self._turn.new_turn()
+
+
+def _stream_writer() -> Callable[[Any], None]:
+    """LangGraph's stream writer inside a graph; outside one (a backend called directly),
+    events go nowhere."""
+    try:
+        return get_stream_writer()
+    except RuntimeError:
+        return lambda _: None
 
 
 def _sql_events(emit: Callable[[Any], None]) -> SqlObserver:

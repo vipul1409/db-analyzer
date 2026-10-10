@@ -26,14 +26,13 @@ from db_analyzer.core.model import (
     WorkloadStatement,
     qualify,
 )
-from db_analyzer.core.units import format_bytes
+from db_analyzer.core.units import BLOCK_BYTES, format_bytes, format_duration
 
 TOP_N = 25  # statements kept per ranking
 # Statistics younger than this say little about the workload. Per-Run configurable.
 MIN_STATS_WINDOW = timedelta(hours=1)
 # Statistics younger than this still rank, but may miss daily or weekly jobs.
 SHORT_WINDOW = timedelta(hours=24)
-BLOCK_BYTES = 8192
 
 # A statement is high or medium severity by its share of all the time the workload spent.
 HIGH_SHARE = 0.25
@@ -100,8 +99,8 @@ def report(
     refused = None
     if window is not None and window < min_window.total_seconds():
         refused = (
-            f"statistics were reset {_duration(window)} ago, under the minimum window of "
-            f"{_duration(min_window.total_seconds())}: a ranking now would describe the last "
+            f"statistics were reset {format_duration(window)} ago, under the minimum window of "
+            f"{format_duration(min_window.total_seconds())}: a ranking now would describe the last "
             "few minutes, not the workload. Rank again after more traffic, or lower the minimum."
         )
         warnings.insert(0, refused)
@@ -212,7 +211,7 @@ def _warnings(
         found.append("The statistics reset time is unknown, so how long they cover is too.")
     elif min_window.total_seconds() <= window < SHORT_WINDOW.total_seconds():
         found.append(
-            f"Statistics cover only {_duration(window)}: jobs that run daily or weekly are "
+            f"Statistics cover only {format_duration(window)}: jobs that run daily or weekly are "
             "missing from this ranking."
         )
     if on_replica:
@@ -290,8 +289,8 @@ def _slow_query(i: WorkloadItem, plan: StatementPlan | None, context: PlanContex
         subject=i.fingerprint,
         severity=severity,
         title=(
-            f"{_head(i.text)}: {_duration(i.total_ms / 1000)} in total over {i.calls:,} calls "
-            f"({i.mean_ms:.1f} ms each, {i.share_of_time:.0%} of the workload)"
+            f"{_head(i.text)}: {format_duration(i.total_ms / 1000)} in total over "
+            f"{i.calls:,} calls ({i.mean_ms:.1f} ms each, {i.share_of_time:.0%} of the workload)"
         ),
         evidence=evidence,
         recommendation=recommendation,
@@ -375,16 +374,6 @@ def _unindexed_fk(fk: UnindexedForeignKey, heavy: ScanActivity | None) -> Observ
         ),
         ddl=f"CREATE INDEX CONCURRENTLY ON {table} ({columns});",
     )
-
-
-def _duration(seconds: float) -> str:
-    if seconds < 90:
-        return f"{seconds:.0f} s"
-    if seconds < 90 * 60:
-        return f"{seconds / 60:.0f} min"
-    if seconds < 48 * 3600:
-        return f"{seconds / 3600:.1f} h"
-    return f"{seconds / 86400:.0f} days"
 
 
 def _head(text: str, chars: int = 80) -> str:
