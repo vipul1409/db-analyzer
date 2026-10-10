@@ -10,7 +10,8 @@ from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import ColumnElement, create_engine, select
+from pydantic import TypeAdapter
+from sqlalchemy import ColumnElement, create_engine, func, select
 from sqlalchemy.orm import Session
 
 from db_analyzer.core.model import (
@@ -56,6 +57,8 @@ Scope = dict[AnalyzerName, list[CollectionRef]]
 Skipped = dict[AnalyzerName, list[tuple[CollectionRef, str]]]
 
 _MIGRATIONS = Path(__file__).parent / "migrations"
+_PROBE = TypeAdapter(ProbeResult)
+PREVIEW_CHARS = 120
 
 
 class Store:
@@ -99,6 +102,10 @@ class Store:
                 row.alias_identifiers = bool(alias_identifiers)
             return _connection(row)
 
+    def connections(self) -> list[Connection]:
+        with Session(self._engine) as s:
+            return [_connection(r) for r in s.scalars(select(ConnectionRow).order_by("name"))]
+
     def find_connection(self, name: str) -> Connection:
         with Session(self._engine) as s:
             row = s.scalars(select(ConnectionRow).where(ConnectionRow.name == name)).first()
@@ -134,6 +141,12 @@ class Store:
                 )
             )
 
+    def latest_probe(self, connection_id: str) -> ProbeResult | None:
+        q = select(ProbeRow).where(ProbeRow.connection_id == connection_id)
+        with Session(self._engine) as s:
+            row = s.scalars(q.order_by(ProbeRow.id.desc())).first()
+            return None if row is None else _PROBE.validate_json(row.result_json)
+
     def start_run(self, connection_id: str, thread_id: str | None) -> Run:
         row = RunRow(
             id=uuid.uuid4().hex,
@@ -164,7 +177,10 @@ class Store:
 
     def get_run(self, run_id: str) -> Run:
         with Session(self._engine) as s:
-            return _run(s.get_one(RunRow, run_id))
+            row = s.get(RunRow, run_id)
+            if row is None:
+                raise KeyError(f"unknown run {run_id}")
+            return _run(row)
 
     def runs(self, connection_id: str) -> list[Run]:
         q = select(RunRow).where(RunRow.connection_id == connection_id)
@@ -293,6 +309,16 @@ class Store:
             FindingRow.connection_id == connection_id, FindingRow.fingerprint == fingerprint
         )
 
+    def latest_observations(self, connection_id: str) -> dict[str, Observation]:
+        """Each of the Connection's Findings' latest Observation, by fingerprint."""
+        latest = (
+            select(func.max(ObservationRow.id))
+            .join(ObservationRow.finding)
+            .where(FindingRow.connection_id == connection_id)
+            .group_by(ObservationRow.finding_id)
+        )
+        return {o.fingerprint: o for o in self._observations(ObservationRow.id.in_(latest))}
+
     def run_observations(self, run_id: str) -> list[Observation]:
         return self._observations(ObservationRow.run_id == run_id)
 
@@ -310,6 +336,21 @@ class Store:
             s.add(row)
             return _thread(row)
 
+    def threads(self, connection_id: str) -> list[Thread]:
+        """Latest activity first; a Thread with no Turn yet counts from its creation."""
+        active = func.coalesce(ThreadRow.last_active_at, ThreadRow.created_at)
+        q = select(ThreadRow).where(ThreadRow.connection_id == connection_id)
+        with Session(self._engine) as s:
+            return [_thread(r) for r in s.scalars(q.order_by(active.desc(), ThreadRow.id))]
+
+    def turn_started(self, thread_id: str, message: str) -> None:
+        """Record the Thread's activity; its first message becomes its preview."""
+        with Session(self._engine) as s, s.begin():
+            row = s.get_one(ThreadRow, thread_id)
+            row.last_active_at = datetime.now(UTC)
+            if row.preview is None:
+                row.preview = " ".join(message.split())[:PREVIEW_CHARS]
+
     def get_thread(self, thread_id: str) -> Thread:
         with Session(self._engine) as s:
             row = s.get(ThreadRow, thread_id)
@@ -322,7 +363,14 @@ class Store:
             s.add(LLMRequestRow(thread_id=thread_id, **dataclasses.asdict(entry)))
 
     def llm_requests(self, thread_id: str) -> list[LLMRequestLog]:
-        q = select(LLMRequestRow).where(LLMRequestRow.thread_id == thread_id)
+        return self._llm_requests(LLMRequestRow.thread_id == thread_id)
+
+    def llm_requests_between(self, start: datetime, end: datetime) -> list[LLMRequestLog]:
+        """Every Thread's model requests made in [start, end)."""
+        return self._llm_requests(LLMRequestRow.at >= start, LLMRequestRow.at < end)
+
+    def _llm_requests(self, *where: ColumnElement[bool]) -> list[LLMRequestLog]:
+        q = select(LLMRequestRow).where(*where)
         with Session(self._engine) as s:
             return [
                 LLMRequestLog(
@@ -364,8 +412,13 @@ def _connection(row: ConnectionRow) -> Connection:
 
 
 def _thread(row: ThreadRow) -> Thread:
+    active = row.last_active_at
     return Thread(
-        id=row.id, connection_id=row.connection_id, created_at=row.created_at.replace(tzinfo=UTC)
+        id=row.id,
+        connection_id=row.connection_id,
+        created_at=row.created_at.replace(tzinfo=UTC),
+        last_active_at=None if active is None else active.replace(tzinfo=UTC),
+        preview=row.preview,
     )
 
 

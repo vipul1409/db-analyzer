@@ -94,16 +94,17 @@ class LLMSettings:
 
 
 def make_model(
-    settings: LLMSettings, http_client: httpx.AsyncClient | None = None
+    settings: LLMSettings, http_client: httpx.AsyncClient | None = None, offline: bool = False
 ) -> BaseChatModel:
     """Pass an `http_client` owned by the caller's event loop: langchain-openai otherwise
     shares one async client across loops, and every turn after the first fails with
-    "Event loop is closed"."""
+    "Event loop is closed". An `offline` model is never called (e.g. a graph built only to read
+    a Thread's state), so it needs no API key."""
     api_key = os.environ.get(settings.api_key_env)
     if not api_key:
-        if not settings.replaying:
+        if not (settings.replaying or offline):
             raise LLMConfigError(f"environment variable {settings.api_key_env} is not set")
-        api_key = "replay-only"  # never sent: the gateway answers from the cassette
+        api_key = "never-sent"  # replayed from the cassette, or never called
     return init_chat_model(
         f"openai:{settings.model}",
         api_key=api_key,

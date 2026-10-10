@@ -1,6 +1,8 @@
 """`dbx` command line. A thin layer over AnalyzerService."""
 
 import asyncio
+import ipaddress
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -9,6 +11,7 @@ from typing import Annotated, Literal
 
 import psycopg
 import typer
+import uvicorn
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -16,6 +19,7 @@ from rich.table import Table
 from db_analyzer.agent.events import AgentEvent
 from db_analyzer.agent.llm import LLMConfigError
 from db_analyzer.analyzers.workload import MIN_STATS_WINDOW
+from db_analyzer.api import create_app
 from db_analyzer.core.model import (
     Connection,
     ConnectionRefused,
@@ -35,6 +39,7 @@ from db_analyzer.runs import OptionsNotAccepted, RunOptions, UnknownAnalyzer, ch
 from db_analyzer.service import CURRENT_STATUSES, AnalyzerService
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+API_TOKEN_ENV = "DBX_API_TOKEN"
 console = Console()
 
 MIN_STATS_WINDOW_HOURS = MIN_STATS_WINDOW.total_seconds() / 3600
@@ -288,6 +293,35 @@ def _run_id(known: list[str], prefix: str) -> str:
         console.print(f"[bold red]{problem} starts with {prefix!r}.[/] See `dbx runs`.")
         raise typer.Exit(1)
     return matches[0]
+
+
+@app.command()
+def serve(
+    host: Annotated[
+        str, typer.Option(help="Address to listen on. Anything but loopback needs a token.")
+    ] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on.")] = 8765,
+) -> None:
+    """Serve the HTTP API on this machine. Set DBX_API_TOKEN to require it as a bearer token on
+    every request; the API holds database credentials, so it listens beyond loopback only with
+    one."""
+    token = os.environ.get(API_TOKEN_ENV) or None
+    if token is None and not _loopback(host):
+        console.print(
+            f"[bold red]Refusing to listen on {escape(host)} without a token.[/] "
+            f"Set {API_TOKEN_ENV}, or listen on 127.0.0.1."
+        )
+        raise typer.Exit(1)
+    uvicorn.run(create_app(AnalyzerService(), token), host=host, port=port)
+
+
+def _loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:  # a host name: it may resolve to anything
+        return False
 
 
 @app.command()

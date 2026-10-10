@@ -2,7 +2,7 @@ COMPOSE := docker compose -f tests/fixtures/docker-compose.yml -p db-analyzer-fi
 # Fixtures to start, e.g. `make db-up PG="pg15 pg16"`. Narrowed to pg17 during development.
 PG ?= pg17
 
-.PHONY: check lint typecheck test test-integration db-up db-down db-seed fmt
+.PHONY: check lint typecheck test test-integration db-up db-down db-seed fmt api-client web-check serve
 
 check: lint typecheck test
 
@@ -23,6 +23,18 @@ test:
 
 test-integration:
 	uv run pytest -m integration
+
+# The OpenAPI spec and the web UI's TypeScript client generated from it: run after changing the
+# API, and commit both (CI fails when they drift). Needs `npm --prefix web ci` once.
+api-client:
+	uv run python -m db_analyzer.api.openapi
+	npm --prefix web run gen
+
+web-check:
+	npm --prefix web run typecheck
+
+serve:
+	uv run dbx serve
 
 db-up:
 	$(COMPOSE) up -d --build --wait $(PG)

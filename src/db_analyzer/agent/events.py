@@ -9,28 +9,36 @@ import re
 from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from db_analyzer.core.model import AuditEntry
 from db_analyzer.safety.aliases import Aliases
 
 # Name of the AIMessage the turn-limit middleware adds when it ends a turn.
 TURN_LIMIT = "turn_limit"
+# The orchestrator's tool that delegates to a subagent (deepagents), and its subagent argument.
+DELEGATE, SUBAGENT_ARG = "task", "subagent_type"
 
 
-class Token(BaseModel):
+class Event(BaseModel):
+    """Every field of an event is always sent, defaults included: their schemas say so."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class Token(Event):
     type: Literal["token"] = "token"
     text: str
 
 
-class ToolStarted(BaseModel):
+class ToolStarted(Event):
     type: Literal["tool_started"] = "tool_started"
     call_id: str
     name: str
     args: dict[str, Any]
 
 
-class ToolFinished(BaseModel):
+class ToolFinished(Event):
     type: Literal["tool_finished"] = "tool_finished"
     call_id: str
     name: str
@@ -38,7 +46,22 @@ class ToolFinished(BaseModel):
     summary: str
 
 
-class SqlExecuted(BaseModel):
+class SubagentStarted(Event):
+    """The orchestrator delegated to a subagent through tool call `call_id`."""
+
+    type: Literal["subagent_started"] = "subagent_started"
+    call_id: str
+    name: str
+
+
+class SubagentFinished(Event):
+    type: Literal["subagent_finished"] = "subagent_finished"
+    call_id: str
+    name: str
+    ok: bool
+
+
+class SqlExecuted(Event):
     type: Literal["sql_executed"] = "sql_executed"
     sql: str
     purpose: str
@@ -47,14 +70,14 @@ class SqlExecuted(BaseModel):
     plan_cost: float | None
 
 
-class SqlRejected(BaseModel):
+class SqlRejected(Event):
     type: Literal["sql_rejected"] = "sql_rejected"
     sql: str
     purpose: str
     reason: str
 
 
-class RunFinished(BaseModel):
+class RunFinished(Event):
     type: Literal["run_finished"] = "run_finished"
     run_id: str
     status: str
@@ -63,14 +86,14 @@ class RunFinished(BaseModel):
 LimitKind = Literal["tokens", "tool_calls", "queries"]
 
 
-class LimitReached(BaseModel):
+class LimitReached(Event):
     type: Literal["limit_reached"] = "limit_reached"
     limit: LimitKind
     used: int
     max: int
 
 
-class Usage(BaseModel):
+class Usage(Event):
     type: Literal["usage"] = "usage"
     model: str
     input_tokens: int
@@ -79,24 +102,28 @@ class Usage(BaseModel):
     cost_usd: float | None
 
 
-class Error(BaseModel):
+class Error(Event):
     type: Literal["error"] = "error"
     message: str
 
 
-class Done(BaseModel):
-    """Last event of every Turn. `ok` is False when the Turn ended on an Error."""
+class Done(Event):
+    """Last event of every Turn. `ok` is False when the Turn ended on an Error or was
+    cancelled; `cancelled` tells the two apart. `answer` is what was answered before it ended."""
 
     type: Literal["done"] = "done"
     thread_id: str
     answer: str
     ok: bool = True
+    cancelled: bool = False
 
 
 AgentEvent = Annotated[
     Token
     | ToolStarted
     | ToolFinished
+    | SubagentStarted
+    | SubagentFinished
     | SqlExecuted
     | SqlRejected
     | RunFinished
@@ -113,6 +140,8 @@ _EVENT_TYPES = {
         Token,
         ToolStarted,
         ToolFinished,
+        SubagentStarted,
+        SubagentFinished,
         SqlExecuted,
         SqlRejected,
         RunFinished,
@@ -152,6 +181,7 @@ class Translator:
         self.answer = ""
         self._aliases = aliases
         self._pending = ""
+        self._subagents: dict[str, str] = {}  # delegating call id -> subagent name
 
     def translate(self, mode: str, chunk: Any, namespace: tuple[str, ...] = ()) -> list[AgentEvent]:
         """`namespace` is LangGraph's subgraph path: empty for the orchestrator, non-empty for a
@@ -230,16 +260,21 @@ class Translator:
             elif isinstance(msg, AIMessage):
                 if msg.tool_calls and not subagent:
                     self.answer = ""  # text before a tool call is a preamble, not the answer
-                events += [
-                    ToolStarted(call_id=c["id"] or "", name=c["name"], args=c["args"])
-                    for c in msg.tool_calls
-                ]
+                for c in msg.tool_calls:
+                    call_id = c["id"] or ""
+                    events.append(ToolStarted(call_id=call_id, name=c["name"], args=c["args"]))
+                    if c["name"] == DELEGATE and not subagent:
+                        name = self._subagents[call_id] = str(c["args"].get(SUBAGENT_ARG, ""))
+                        events.append(SubagentStarted(call_id=call_id, name=name))
             elif isinstance(msg, ToolMessage):
+                ok = msg.status != "error"
+                if not subagent and (name := self._subagents.pop(msg.tool_call_id, "")):
+                    events.append(SubagentFinished(call_id=msg.tool_call_id, name=name, ok=ok))
                 events.append(
                     ToolFinished(
                         call_id=msg.tool_call_id,
                         name=msg.name or "",
-                        ok=msg.status != "error",
+                        ok=ok,
                         summary=str(msg.content)[:SUMMARY_CHARS],
                     )
                 )

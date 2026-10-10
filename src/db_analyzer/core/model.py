@@ -40,6 +40,14 @@ class Connection:
 
 
 @dataclass(frozen=True)
+class ConnectionInfo(Connection):
+    """A Connection as listed: whether this process's environment holds its DSN. Never the DSN
+    or the variable's value."""
+
+    dsn_env_set: bool = False
+
+
+@dataclass(frozen=True)
 class Privileges:
     pg_monitor: bool
     pg_read_all_stats: bool
@@ -369,11 +377,23 @@ class Run:
 
 @dataclass(frozen=True)
 class Thread:
-    """A conversation with the agent, bound to one Connection for its whole life."""
+    """A conversation with the agent, bound to one Connection for its whole life.
+    `last_active_at` is when its latest Turn started, and `preview` the start of its first
+    message: both None until its first Turn (and for Threads from before they were kept)."""
 
     id: str
     connection_id: str
     created_at: datetime
+    last_active_at: datetime | None = None
+    preview: str | None = None
+
+
+@dataclass(frozen=True)
+class ThreadMessage:
+    """One message of a Thread's history: the user's, or the agent's final answer."""
+
+    role: Literal["user", "agent"]
+    text: str
 
 
 FindingCategory = Literal[
@@ -463,6 +483,15 @@ class Observation:
 
 
 @dataclass(frozen=True)
+class FindingView:
+    """A Finding with what the latest Run to observe it saw: its severity, title, evidence and
+    recommendation now."""
+
+    finding: Finding
+    latest: Observation
+
+
+@dataclass(frozen=True)
 class LLMRequestLog:
     """One model request, as the LLMGateway logs it."""
 
@@ -505,6 +534,14 @@ class UnknownCollections(Exception):
 
 class ConnectionRefused(Exception):
     """The target cannot be analysed safely or is unsupported."""
+
+
+class DsnEnvMissing(ConnectionRefused):
+    """The environment variable a Connection names for its DSN is not set in this process."""
+
+    def __init__(self, env: str) -> None:
+        super().__init__(f"environment variable {env} is not set")
+        self.env = env
 
 
 class QueryRejected(Exception):

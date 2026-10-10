@@ -1,0 +1,4437 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DB Analyzer",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/connections": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "List Connections",
+        "operationId": "list_connections_api_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectionInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Connections Api Connections Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Upsert Connection",
+        "operationId": "upsert_connection_api_connections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/connections/{connection_id}": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Get Connection",
+        "operationId": "get_connection_api_connections__connection_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/probe": {
+      "post": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Probe",
+        "description": "Probe the database now: what the analyzer can see.",
+        "operationId": "probe_api_connections__connection_id__probe_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Latest Probe",
+        "description": "The latest probe, without touching the database; null if never probed.",
+        "operationId": "latest_probe_api_connections__connection_id__probe_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProbeResult"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Latest Probe Api Connections  Connection Id  Probe Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/capabilities": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Capabilities",
+        "operationId": "capabilities_api_connections__connection_id__capabilities_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Capability"
+                  },
+                  "title": "Response Capabilities Api Connections  Connection Id  Capabilities Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/runs": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Start Run",
+        "description": "Run the analyzers and return the finished Run. Blocks until it finishes.",
+        "operationId": "start_run_api_connections__connection_id__runs_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List Runs",
+        "description": "Oldest first. A Run with a `thread_id` was started from chat.",
+        "operationId": "list_runs_api_connections__connection_id__runs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Run"
+                  },
+                  "title": "Response List Runs Api Connections  Connection Id  Runs Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/runs/compare": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Compare Runs",
+        "description": "What changed between two Runs of one Connection, over the scope both measured.",
+        "operationId": "compare_runs_api_runs_compare_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Before"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunComparison"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run",
+        "description": "Everything the reports show of one Run: ranked observations, sizes, the workload\nranking and what was skipped.",
+        "operationId": "get_run_api_runs__run_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/export": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Export Run",
+        "operationId": "export_run_api_runs__run_id__export_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "md",
+                "json"
+              ],
+              "type": "string",
+              "default": "md",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report, as a download.",
+            "content": {
+              "text/markdown": {},
+              "application/json": {}
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/findings": {
+      "get": {
+        "tags": [
+          "findings"
+        ],
+        "summary": "List Findings",
+        "description": "The Connection's Findings with their latest Observation. Without `status`, every\nFinding but obsolete ones. A Finding with `unobserved_by` set asks \"fixed?\".",
+        "operationId": "list_findings_api_connections__connection_id__findings_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "open",
+                      "acknowledged",
+                      "fixed",
+                      "obsolete"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FindingView"
+                  },
+                  "title": "Response List Findings Api Connections  Connection Id  Findings Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/findings/status": {
+      "post": {
+        "tags": [
+          "findings"
+        ],
+        "summary": "Set Finding Status",
+        "description": "Acknowledge, mark fixed or reopen a Finding; settles any \"fixed?\" prompt.",
+        "operationId": "set_finding_status_api_connections__connection_id__findings_status_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Finding"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/observations": {
+      "get": {
+        "tags": [
+          "findings"
+        ],
+        "summary": "Observations",
+        "description": "One Finding's Observations, one per Run that saw it, oldest first.",
+        "operationId": "observations_api_connections__connection_id__observations_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "fingerprint",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Fingerprint"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Observation"
+                  },
+                  "title": "Response Observations Api Connections  Connection Id  Observations Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/audit": {
+      "get": {
+        "tags": [
+          "audit"
+        ],
+        "summary": "Audit",
+        "description": "Every statement executed or rejected, oldest first; optionally one Thread's.",
+        "operationId": "audit_api_connections__connection_id__audit_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          },
+          {
+            "name": "thread_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEntry"
+                  },
+                  "title": "Response Audit Api Connections  Connection Id  Audit Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/connections/{connection_id}/threads": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "List Threads",
+        "description": "Latest activity first.",
+        "operationId": "list_threads_api_connections__connection_id__threads_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Thread"
+                  },
+                  "title": "Response List Threads Api Connections  Connection Id  Threads Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Start Thread",
+        "operationId": "start_thread_api_connections__connection_id__threads_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Get Thread",
+        "operationId": "get_thread_api_threads__thread_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/history": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "History",
+        "description": "The user's messages and the agent's final answers, in order.",
+        "operationId": "history_api_threads__thread_id__history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ThreadMessage"
+                  },
+                  "title": "Response History Api Threads  Thread Id  History Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/messages": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Send",
+        "description": "Run one Turn, streaming its AgentEvents as Server-Sent Events: the event name is the\nevent's type, the data its JSON. The stream ends after `done`. Closing it cancels the\nTurn. 409 while the Thread has a Turn running; 503 when no model key is configured.",
+        "operationId": "send_api_threads__thread_id__messages_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Turn's AgentEvents, one per Server-Sent Event.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/cancel": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Cancel",
+        "description": "Cancel the Thread's Turn in progress: its stream ends with `done`, `cancelled`.",
+        "operationId": "cancel_api_threads__thread_id__cancel_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Cancelled"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/threads/{thread_id}/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Thread Usage",
+        "operationId": "thread_usage_api_threads__thread_id__usage_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Thread Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Monthly Usage",
+        "description": "Every Thread's tokens and estimated cost in one calendar month. `cost_usd` is null\nwhen any request's cost is unknown.",
+        "operationId": "monthly_usage_api_usage_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "YYYY-MM (UTC); default: this month",
+              "title": "Month"
+            },
+            "description": "YYYY-MM (UTC); default: this month"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuditEntry": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "purpose": {
+            "type": "string",
+            "title": "Purpose"
+          },
+          "sql": {
+            "type": "string",
+            "title": "Sql"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "executed",
+              "rejected",
+              "failed"
+            ],
+            "title": "Decision"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Count"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "plan_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Cost"
+          },
+          "plan_rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "purpose",
+          "sql",
+          "decision",
+          "reason",
+          "duration_ms",
+          "row_count",
+          "at"
+        ],
+        "title": "AuditEntry"
+      },
+      "Cancelled": {
+        "properties": {
+          "cancelled": {
+            "type": "boolean",
+            "title": "Cancelled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cancelled"
+        ],
+        "title": "Cancelled"
+      },
+      "Capability": {
+        "type": "string",
+        "enum": [
+          "probe",
+          "storage_stats",
+          "exact_counts",
+          "readonly_sql",
+          "workload"
+        ],
+        "title": "Capability",
+        "description": "What an adapter can do on a Connection. The agent gets a tool only for capabilities the\nConnection has."
+      },
+      "CollectionKind": {
+        "type": "string",
+        "enum": [
+          "table",
+          "partitioned_table",
+          "matview"
+        ],
+        "title": "CollectionKind"
+      },
+      "CollectionRef": {
+        "properties": {
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CollectionKind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "namespace",
+          "name",
+          "kind"
+        ],
+        "title": "CollectionRef"
+      },
+      "Connection": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "adapter_kind": {
+            "type": "string",
+            "title": "Adapter Kind"
+          },
+          "dsn_env": {
+            "type": "string",
+            "title": "Dsn Env"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SessionLimits"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateLimits"
+          },
+          "alias_identifiers": {
+            "type": "boolean",
+            "title": "Alias Identifiers",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "adapter_kind",
+          "dsn_env"
+        ],
+        "title": "Connection",
+        "description": "A configured target: exactly one database. Holds a reference to the DSN, never the DSN."
+      },
+      "ConnectionIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "dsn_env": {
+            "type": "string",
+            "title": "Dsn Env"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alias_identifiers": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alias Identifiers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "dsn_env"
+        ],
+        "title": "ConnectionIn",
+        "description": "A Connection to add, or to update by name. The DSN is never sent: `dsn_env` names the\nenvironment variable of the API process that holds it. Settings left out keep their\ncurrent value (the default for a new Connection)."
+      },
+      "ConnectionInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "adapter_kind": {
+            "type": "string",
+            "title": "Adapter Kind"
+          },
+          "dsn_env": {
+            "type": "string",
+            "title": "Dsn Env"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SessionLimits"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateLimits"
+          },
+          "alias_identifiers": {
+            "type": "boolean",
+            "title": "Alias Identifiers",
+            "default": false
+          },
+          "dsn_env_set": {
+            "type": "boolean",
+            "title": "Dsn Env Set",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "adapter_kind",
+          "dsn_env"
+        ],
+        "title": "ConnectionInfo",
+        "description": "A Connection as listed: whether this process's environment holds its DSN. Never the DSN\nor the variable's value."
+      },
+      "DeadTupleScan": {
+        "properties": {
+          "live_rows": {
+            "type": "integer",
+            "title": "Live Rows"
+          },
+          "dead_rows": {
+            "type": "integer",
+            "title": "Dead Rows"
+          },
+          "dead_percent": {
+            "type": "number",
+            "title": "Dead Percent"
+          },
+          "free_percent": {
+            "type": "number",
+            "title": "Free Percent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "live_rows",
+          "dead_rows",
+          "dead_percent",
+          "free_percent"
+        ],
+        "title": "DeadTupleScan",
+        "description": "A dead-tuple measurement that reads the table (pgstattuple_approx), not the counters."
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "description": "Every error: a stable machine `code`, a `message` to show, and `details` when there is\nmore to say."
+      },
+      "Finding": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "size",
+              "slow_query",
+              "missing_index",
+              "unused_index",
+              "duplicate_index",
+              "invalid_index",
+              "bloat",
+              "stale_stats",
+              "hotspot",
+              "config"
+            ],
+            "title": "Category"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "acknowledged",
+              "fixed",
+              "obsolete"
+            ],
+            "title": "Status"
+          },
+          "first_seen_run": {
+            "type": "string",
+            "title": "First Seen Run"
+          },
+          "last_seen_run": {
+            "type": "string",
+            "title": "Last Seen Run"
+          },
+          "unobserved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unobserved By"
+          },
+          "collection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection"
+          },
+          "covered_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "inventory",
+                  "workload",
+                  "index_advice",
+                  "hotspot"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Covered By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "fingerprint",
+          "category",
+          "subject",
+          "status",
+          "first_seen_run",
+          "last_seen_run"
+        ],
+        "title": "Finding",
+        "description": "A problem or fact about one subject, with an identity stable across Runs.\n`unobserved_by` is the latest Run whose scope covered the subject but did not observe the\nFinding: it asks the engineer \"fixed?\". It is never answered automatically."
+      },
+      "FindingView": {
+        "properties": {
+          "finding": {
+            "$ref": "#/components/schemas/Finding"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/Observation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "finding",
+          "latest"
+        ],
+        "title": "FindingView",
+        "description": "A Finding with what the latest Run to observe it saw: its severity, title, evidence and\nrecommendation now."
+      },
+      "GateLimits": {
+        "properties": {
+          "max_total_cost": {
+            "type": "number",
+            "title": "Max Total Cost",
+            "default": 2000000
+          },
+          "max_result_rows": {
+            "type": "integer",
+            "title": "Max Result Rows",
+            "default": 10000
+          },
+          "max_scan_rows": {
+            "type": "integer",
+            "title": "Max Scan Rows",
+            "default": 50000000
+          }
+        },
+        "type": "object",
+        "title": "GateLimits",
+        "description": "EXPLAIN gate limits; a statement whose plan exceeds any of them is not run."
+      },
+      "Health": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "chat_available": {
+            "type": "boolean",
+            "title": "Chat Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "chat_available"
+        ],
+        "title": "Health"
+      },
+      "Maintenance": {
+        "properties": {
+          "live_rows": {
+            "type": "integer",
+            "title": "Live Rows"
+          },
+          "dead_rows": {
+            "type": "integer",
+            "title": "Dead Rows"
+          },
+          "modified_since_analyze": {
+            "type": "integer",
+            "title": "Modified Since Analyze"
+          },
+          "last_vacuum": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Vacuum"
+          },
+          "last_analyze": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Analyze"
+          },
+          "autovacuum_disabled": {
+            "type": "boolean",
+            "title": "Autovacuum Disabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "live_rows",
+          "dead_rows",
+          "modified_since_analyze",
+          "last_vacuum",
+          "last_analyze",
+          "autovacuum_disabled"
+        ],
+        "title": "Maintenance",
+        "description": "Activity counters and vacuum/analyze recency of one collection (a partitioned table sums\nits leaf partitions and takes the oldest timestamp; None if any leaf never had it)."
+      },
+      "MessageIn": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "MessageIn"
+      },
+      "Observation": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Severity"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          },
+          "recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation"
+          },
+          "ddl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ddl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "fingerprint",
+          "severity",
+          "title",
+          "evidence",
+          "recommendation",
+          "ddl"
+        ],
+        "title": "Observation",
+        "description": "What one Run saw for one Finding."
+      },
+      "Privileges": {
+        "properties": {
+          "pg_monitor": {
+            "type": "boolean",
+            "title": "Pg Monitor"
+          },
+          "pg_read_all_stats": {
+            "type": "boolean",
+            "title": "Pg Read All Stats"
+          },
+          "readable_tables": {
+            "type": "integer",
+            "title": "Readable Tables"
+          },
+          "unreadable_tables": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unreadable Tables"
+          },
+          "azure_sys_connect": {
+            "type": "boolean",
+            "title": "Azure Sys Connect",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "pg_monitor",
+          "pg_read_all_stats",
+          "readable_tables",
+          "unreadable_tables"
+        ],
+        "title": "Privileges"
+      },
+      "ProbeResult": {
+        "properties": {
+          "server_version_num": {
+            "type": "integer",
+            "title": "Server Version Num"
+          },
+          "server_version": {
+            "type": "string",
+            "title": "Server Version"
+          },
+          "in_recovery": {
+            "type": "boolean",
+            "title": "In Recovery"
+          },
+          "host_type": {
+            "type": "string",
+            "enum": [
+              "self_managed",
+              "azure_flexible"
+            ],
+            "title": "Host Type"
+          },
+          "extensions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Extensions"
+          },
+          "privileges": {
+            "$ref": "#/components/schemas/Privileges"
+          },
+          "settings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Settings"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/StatsFreshness"
+          },
+          "taken_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Taken At"
+          },
+          "extension_schemas": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Extension Schemas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "server_version_num",
+          "server_version",
+          "in_recovery",
+          "host_type",
+          "extensions",
+          "privileges",
+          "settings",
+          "stats",
+          "taken_at"
+        ],
+        "title": "ProbeResult",
+        "description": "What the analyzer can see on a Connection."
+      },
+      "Run": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "scope": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/CollectionRef"
+              },
+              "type": "array"
+            },
+            "propertyNames": {
+              "enum": [
+                "inventory",
+                "workload",
+                "index_advice",
+                "hotspot"
+              ]
+            },
+            "type": "object",
+            "title": "Scope"
+          },
+          "skipped": {
+            "additionalProperties": {
+              "items": {
+                "prefixItems": [
+                  {
+                    "$ref": "#/components/schemas/CollectionRef"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              "type": "array"
+            },
+            "propertyNames": {
+              "enum": [
+                "inventory",
+                "workload",
+                "index_advice",
+                "hotspot"
+              ]
+            },
+            "type": "object",
+            "title": "Skipped"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "complete",
+              "partial",
+              "failed"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "connection_id",
+          "thread_id",
+          "scope",
+          "skipped",
+          "started_at",
+          "finished_at",
+          "status"
+        ],
+        "title": "Run",
+        "description": "One execution of analyzers against a Connection. `scope` lists, per analyzer, the\ncollections actually measured; `skipped` those planned but not measured, with the reason."
+      },
+      "RunComparison": {
+        "properties": {
+          "before": {
+            "type": "string",
+            "title": "Before"
+          },
+          "after": {
+            "type": "string",
+            "title": "After"
+          },
+          "shared": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "propertyNames": {
+              "enum": [
+                "inventory",
+                "workload",
+                "index_advice",
+                "hotspot"
+              ]
+            },
+            "type": "object",
+            "title": "Shared"
+          },
+          "not_compared": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "propertyNames": {
+              "enum": [
+                "inventory",
+                "workload",
+                "index_advice",
+                "hotspot"
+              ]
+            },
+            "type": "object",
+            "title": "Not Compared"
+          },
+          "size_changes": {
+            "items": {
+              "$ref": "#/components/schemas/SizeChange"
+            },
+            "type": "array",
+            "title": "Size Changes"
+          },
+          "appeared": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Appeared"
+          },
+          "disappeared": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disappeared"
+          }
+        },
+        "type": "object",
+        "required": [
+          "before",
+          "after",
+          "shared",
+          "not_compared",
+          "size_changes",
+          "appeared",
+          "disappeared"
+        ],
+        "title": "RunComparison",
+        "description": "`shared` is, per analyzer, the collections both Runs measured; `not_compared` those only\none of them measured (including ones the other skipped). Size changes are largest first;\n`appeared` and `disappeared` are problem Findings, by fingerprint."
+      },
+      "RunIn": {
+        "properties": {
+          "analyzers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Analyzers"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "exact_counts": {
+            "type": "boolean",
+            "title": "Exact Counts",
+            "default": false
+          },
+          "min_stats_window_hours": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Stats Window Hours"
+          }
+        },
+        "type": "object",
+        "title": "RunIn",
+        "description": "A deterministic Run: no model. `collections` targets inventory at those tables\n(schema-qualified, or bare when unambiguous) and `exact_counts` counts their rows, each only\nwhere the EXPLAIN gate allows. `min_stats_window_hours` is how young workload statistics\nmay be before ranking is refused (default 1 h). Options no chosen analyzer takes are\nrefused."
+      },
+      "RunView": {
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "run": {
+            "$ref": "#/components/schemas/Run"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
+            "type": "array",
+            "title": "Observations"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/StorageStats"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage"
+          },
+          "workload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkloadReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/Skipped"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection",
+          "run",
+          "observations",
+          "storage",
+          "workload",
+          "skipped"
+        ],
+        "title": "RunView",
+        "description": "`observations` in rank order, most severe first. `storage` is None when the Run did not\ninclude inventory, else largest first; `workload` is None when it did not include workload.\n`skipped` lists whole collections first, then measurements in `storage` order."
+      },
+      "SessionLimits": {
+        "properties": {
+          "statement_timeout": {
+            "type": "string",
+            "title": "Statement Timeout",
+            "default": "30s"
+          },
+          "lock_timeout": {
+            "type": "string",
+            "title": "Lock Timeout",
+            "default": "1s"
+          },
+          "work_mem": {
+            "type": "string",
+            "title": "Work Mem",
+            "default": "32MB"
+          }
+        },
+        "type": "object",
+        "title": "SessionLimits"
+      },
+      "SizeChange": {
+        "properties": {
+          "collection": {
+            "type": "string",
+            "title": "Collection"
+          },
+          "before_bytes": {
+            "type": "integer",
+            "title": "Before Bytes"
+          },
+          "after_bytes": {
+            "type": "integer",
+            "title": "After Bytes"
+          },
+          "delta_bytes": {
+            "type": "integer",
+            "title": "Delta Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "collection",
+          "before_bytes",
+          "after_bytes",
+          "delta_bytes"
+        ],
+        "title": "SizeChange"
+      },
+      "Skipped": {
+        "properties": {
+          "analyzer": {
+            "type": "string",
+            "enum": [
+              "inventory",
+              "workload",
+              "index_advice",
+              "hotspot"
+            ],
+            "title": "Analyzer"
+          },
+          "collection": {
+            "type": "string",
+            "title": "Collection"
+          },
+          "measurement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurement"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analyzer",
+          "collection",
+          "measurement",
+          "reason"
+        ],
+        "title": "Skipped",
+        "description": "A collection a Run planned but did not measure (`measurement` None), or one measurement it\ndid not take on a collection it did measure."
+      },
+      "StatsFreshness": {
+        "properties": {
+          "database_stats_reset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Stats Reset"
+          },
+          "statements_stats_reset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statements Stats Reset"
+          },
+          "never_analyzed_tables": {
+            "type": "integer",
+            "title": "Never Analyzed Tables"
+          },
+          "oldest_analyze": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Analyze"
+          }
+        },
+        "type": "object",
+        "required": [
+          "database_stats_reset",
+          "statements_stats_reset",
+          "never_analyzed_tables",
+          "oldest_analyze"
+        ],
+        "title": "StatsFreshness"
+      },
+      "StatusIn": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "acknowledged",
+              "fixed"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "status"
+        ],
+        "title": "StatusIn"
+      },
+      "StorageStats": {
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/CollectionRef"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Count"
+          },
+          "row_count_method": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "sample"
+            ],
+            "title": "Row Count Method"
+          },
+          "data_bytes": {
+            "type": "integer",
+            "title": "Data Bytes"
+          },
+          "index_bytes": {
+            "type": "integer",
+            "title": "Index Bytes"
+          },
+          "toast_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toast Bytes"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes"
+          },
+          "partitions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partitions"
+          },
+          "maintenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Maintenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dead_tuple_scan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeadTupleScan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipped": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ref",
+          "row_count",
+          "row_count_method",
+          "data_bytes",
+          "index_bytes",
+          "toast_bytes",
+          "total_bytes"
+        ],
+        "title": "StorageStats",
+        "description": "Size of one collection. `row_count` is None when the store has no estimate yet.\n`skipped` names measurements planned for this collection but not taken, with the reason\n(e.g. an exact count the EXPLAIN gate refused); the collection itself was measured."
+      },
+      "Thread": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "connection_id",
+          "created_at"
+        ],
+        "title": "Thread",
+        "description": "A conversation with the agent, bound to one Connection for its whole life.\n`last_active_at` is when its latest Turn started, and `preview` the start of its first\nmessage: both None until its first Turn (and for Threads from before they were kept)."
+      },
+      "ThreadMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Role"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "text"
+        ],
+        "title": "ThreadMessage",
+        "description": "One message of a Thread's history: the user's, or the agent's final answer."
+      },
+      "Usage": {
+        "properties": {
+          "type": {
+            "const": "usage",
+            "default": "usage",
+            "title": "Type",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "cached_tokens": {
+            "title": "Cached Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          }
+        },
+        "required": [
+          "type",
+          "model",
+          "input_tokens",
+          "cached_tokens",
+          "output_tokens",
+          "cost_usd"
+        ],
+        "title": "Usage",
+        "type": "object"
+      },
+      "WorkloadItem": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "calls": {
+            "type": "integer",
+            "title": "Calls"
+          },
+          "total_ms": {
+            "type": "number",
+            "title": "Total Ms"
+          },
+          "mean_ms": {
+            "type": "number",
+            "title": "Mean Ms"
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "shared_blks_read": {
+            "type": "integer",
+            "title": "Shared Blks Read"
+          },
+          "temp_blks_written": {
+            "type": "integer",
+            "title": "Temp Blks Written"
+          },
+          "share_of_time": {
+            "type": "number",
+            "title": "Share Of Time"
+          },
+          "ranked_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ranked By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "text",
+          "calls",
+          "total_ms",
+          "mean_ms",
+          "rows",
+          "shared_blks_read",
+          "temp_blks_written",
+          "share_of_time",
+          "ranked_by"
+        ],
+        "title": "WorkloadItem",
+        "description": "One distinct statement of the workload, ranked. `fingerprint` is a hash of the\nnormalized text, never the server's query id, so it holds across versions."
+      },
+      "WorkloadReport": {
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pg_stat_statements",
+                  "azure_query_store"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "stats_reset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stats Reset"
+          },
+          "window_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Seconds"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkloadItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "statements": {
+            "type": "integer",
+            "title": "Statements"
+          },
+          "total_ms": {
+            "type": "number",
+            "title": "Total Ms"
+          },
+          "excluded": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Excluded"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "refused": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refused"
+          },
+          "enable_steps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Enable Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "stats_reset",
+          "window_seconds",
+          "items",
+          "statements",
+          "total_ms",
+          "excluded",
+          "warnings"
+        ],
+        "title": "WorkloadReport",
+        "description": "What the workload part of a Run found. `items` is empty and `refused` says why when the\nstatistics cannot be ranked; `source` is None when the Connection has none."
+      },
+      "Done": {
+        "description": "Last event of every Turn. `ok` is False when the Turn ended on an Error or was\ncancelled; `cancelled` tells the two apart. `answer` is what was answered before it ended.",
+        "properties": {
+          "type": {
+            "const": "done",
+            "default": "done",
+            "title": "Type",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "cancelled": {
+            "default": false,
+            "title": "Cancelled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "thread_id",
+          "answer",
+          "ok",
+          "cancelled"
+        ],
+        "title": "Done",
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "type": {
+            "const": "error",
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "message"
+        ],
+        "title": "Error",
+        "type": "object"
+      },
+      "LimitReached": {
+        "properties": {
+          "type": {
+            "const": "limit_reached",
+            "default": "limit_reached",
+            "title": "Type",
+            "type": "string"
+          },
+          "limit": {
+            "enum": [
+              "tokens",
+              "tool_calls",
+              "queries"
+            ],
+            "title": "Limit",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          },
+          "max": {
+            "title": "Max",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "limit",
+          "used",
+          "max"
+        ],
+        "title": "LimitReached",
+        "type": "object"
+      },
+      "RunFinished": {
+        "properties": {
+          "type": {
+            "const": "run_finished",
+            "default": "run_finished",
+            "title": "Type",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "run_id",
+          "status"
+        ],
+        "title": "RunFinished",
+        "type": "object"
+      },
+      "SqlExecuted": {
+        "properties": {
+          "type": {
+            "const": "sql_executed",
+            "default": "sql_executed",
+            "title": "Type",
+            "type": "string"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Count"
+          },
+          "plan_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Cost"
+          }
+        },
+        "required": [
+          "type",
+          "sql",
+          "purpose",
+          "duration_ms",
+          "row_count",
+          "plan_cost"
+        ],
+        "title": "SqlExecuted",
+        "type": "object"
+      },
+      "SqlRejected": {
+        "properties": {
+          "type": {
+            "const": "sql_rejected",
+            "default": "sql_rejected",
+            "title": "Type",
+            "type": "string"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "sql",
+          "purpose",
+          "reason"
+        ],
+        "title": "SqlRejected",
+        "type": "object"
+      },
+      "SubagentFinished": {
+        "properties": {
+          "type": {
+            "const": "subagent_finished",
+            "default": "subagent_finished",
+            "title": "Type",
+            "type": "string"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "call_id",
+          "name",
+          "ok"
+        ],
+        "title": "SubagentFinished",
+        "type": "object"
+      },
+      "SubagentStarted": {
+        "description": "The orchestrator delegated to a subagent through tool call `call_id`.",
+        "properties": {
+          "type": {
+            "const": "subagent_started",
+            "default": "subagent_started",
+            "title": "Type",
+            "type": "string"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "call_id",
+          "name"
+        ],
+        "title": "SubagentStarted",
+        "type": "object"
+      },
+      "Token": {
+        "properties": {
+          "type": {
+            "const": "token",
+            "default": "token",
+            "title": "Type",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "Token",
+        "type": "object"
+      },
+      "ToolFinished": {
+        "properties": {
+          "type": {
+            "const": "tool_finished",
+            "default": "tool_finished",
+            "title": "Type",
+            "type": "string"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "call_id",
+          "name",
+          "ok",
+          "summary"
+        ],
+        "title": "ToolFinished",
+        "type": "object"
+      },
+      "ToolStarted": {
+        "properties": {
+          "type": {
+            "const": "tool_started",
+            "default": "tool_started",
+            "title": "Type",
+            "type": "string"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "call_id",
+          "name",
+          "args"
+        ],
+        "title": "ToolStarted",
+        "type": "object"
+      },
+      "AgentEvent": {
+        "discriminator": {
+          "mapping": {
+            "done": "#/components/schemas/Done",
+            "error": "#/components/schemas/Error",
+            "limit_reached": "#/components/schemas/LimitReached",
+            "run_finished": "#/components/schemas/RunFinished",
+            "sql_executed": "#/components/schemas/SqlExecuted",
+            "sql_rejected": "#/components/schemas/SqlRejected",
+            "subagent_finished": "#/components/schemas/SubagentFinished",
+            "subagent_started": "#/components/schemas/SubagentStarted",
+            "token": "#/components/schemas/Token",
+            "tool_finished": "#/components/schemas/ToolFinished",
+            "tool_started": "#/components/schemas/ToolStarted",
+            "usage": "#/components/schemas/Usage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Token"
+          },
+          {
+            "$ref": "#/components/schemas/ToolStarted"
+          },
+          {
+            "$ref": "#/components/schemas/ToolFinished"
+          },
+          {
+            "$ref": "#/components/schemas/SubagentStarted"
+          },
+          {
+            "$ref": "#/components/schemas/SubagentFinished"
+          },
+          {
+            "$ref": "#/components/schemas/SqlExecuted"
+          },
+          {
+            "$ref": "#/components/schemas/SqlRejected"
+          },
+          {
+            "$ref": "#/components/schemas/RunFinished"
+          },
+          {
+            "$ref": "#/components/schemas/LimitReached"
+          },
+          {
+            "$ref": "#/components/schemas/Usage"
+          },
+          {
+            "$ref": "#/components/schemas/Error"
+          },
+          {
+            "$ref": "#/components/schemas/Done"
+          }
+        ]
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "description": "The token `dbx serve` was given, if any.",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

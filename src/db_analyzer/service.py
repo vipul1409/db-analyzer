@@ -2,16 +2,20 @@
 
 import asyncio
 import os
+import threading
+import weakref
 from collections.abc import AsyncIterator, Callable, Collection, Iterator, Sequence
-from contextlib import contextmanager
-from datetime import timedelta
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 import psycopg
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.config import get_stream_writer
 
@@ -23,6 +27,7 @@ from db_analyzer.adapters.postgres.session import open_auxiliary_session, open_s
 from db_analyzer.adapters.sql_common.templates import run_template
 from db_analyzer.agent import digest
 from db_analyzer.agent.events import (
+    TURN_LIMIT,
     AgentEvent,
     Done,
     Error,
@@ -51,9 +56,12 @@ from db_analyzer.core.model import (
     AuditEntry,
     Capability,
     Connection,
+    ConnectionInfo,
     ConnectionRefused,
+    DsnEnvMissing,
     Finding,
     FindingStatus,
+    FindingView,
     GateLimits,
     LLMRequestLog,
     Observation,
@@ -65,6 +73,7 @@ from db_analyzer.core.model import (
     SettableStatus,
     StorageStats,
     Thread,
+    ThreadMessage,
     UnknownCollections,
     WorkloadReport,
 )
@@ -75,6 +84,18 @@ from db_analyzer.store.store import Store
 
 CURRENT_STATUSES: tuple[FindingStatus, ...] = ("open", "acknowledged", "fixed")  # not obsolete
 SqlObserver = Callable[[AuditEntry], None]
+
+
+class TurnActive(Exception):
+    """A Thread already has a Turn running: a second would interleave with it."""
+
+    def __init__(self, thread_id: str) -> None:
+        super().__init__(f"Thread {thread_id} already has a Turn running")
+        self.thread_id = thread_id
+
+
+class RunsNotComparable(ValueError):
+    """Runs of different Connections."""
 
 
 def default_home() -> Path:
@@ -93,6 +114,8 @@ class AnalyzerService:
         self._home = home or default_home()
         self._store = Store(self._home / "db-analyzer.sqlite")
         self._llm = llm or LLMSettings.from_env()
+        self._checkpoints = self._home / "checkpoints.sqlite"
+        self._turns = _Turns()
         self.min_stats_window = min_stats_window
 
     def add_connection(
@@ -114,6 +137,18 @@ class AnalyzerService:
     def connection(self, name: str) -> Connection:
         return self._store.find_connection(name)
 
+    def connections(self) -> list[ConnectionInfo]:
+        """Every Connection, by name, each saying whether its DSN variable is set here."""
+        return [_info(c) for c in self._store.connections()]
+
+    def connection_info(self, connection_id: str) -> ConnectionInfo:
+        return _info(self._store.get_connection(connection_id))
+
+    @property
+    def chat_available(self) -> bool:
+        """Whether Turns can reach a model: an API key is set, or responses are replayed."""
+        return bool(os.environ.get(self._llm.api_key_env)) or self._llm.replaying
+
     def capabilities(self, connection_id: str) -> frozenset[Capability]:
         self._store.get_connection(connection_id)  # only Postgres today: one adapter
         return pg.CAPABILITIES
@@ -130,6 +165,12 @@ class AnalyzerService:
             result = pg_probe.probe(executor)
         self._store.save_probe(connection.id, result)
         return result
+
+    def latest_probe(self, connection_id: str) -> ProbeResult | None:
+        """The Connection's most recent probe, from the store: the database is not touched.
+        None if it was never probed."""
+        self._store.get_connection(connection_id)
+        return self._store.latest_probe(connection_id)
 
     def run(
         self,
@@ -201,6 +242,8 @@ class AnalyzerService:
             return executor.execute_agent(sql, purpose)
 
     def runs(self, connection_id: str) -> list[Run]:
+        """Oldest first."""
+        self._store.get_connection(connection_id)
         return self._store.runs(connection_id)
 
     def run_observations(self, run_id: str) -> list[Observation]:
@@ -221,7 +264,16 @@ class AnalyzerService:
     ) -> list[Finding]:
         """The Connection's Findings with one of `statuses`; obsolete ones only when asked for.
         A Finding with `unobserved_by` set is asking "fixed?"."""
+        self._store.get_connection(connection_id)
         return self._store.findings(connection_id, statuses)
+
+    def finding_views(
+        self, connection_id: str, statuses: Collection[FindingStatus] = CURRENT_STATUSES
+    ) -> list[FindingView]:
+        """`findings`, each with its latest Observation (severity, title, recommendation)."""
+        listed = self.findings(connection_id, statuses)
+        latest = self._store.latest_observations(connection_id)
+        return [FindingView(f, latest[f.fingerprint]) for f in listed]
 
     def set_finding_status(
         self,
@@ -236,14 +288,18 @@ class AnalyzerService:
         return self._store.set_finding_status(connection_id, fingerprint, status)
 
     def observations(self, connection_id: str, fingerprint: str) -> list[Observation]:
-        return self._store.observations(connection_id, fingerprint)
+        """The Finding's Observations, one per Run that saw it, oldest first."""
+        observed = self._store.observations(connection_id, fingerprint)
+        if not observed:  # every Finding was observed at least once
+            raise KeyError(f"no Finding {fingerprint!r}")
+        return observed
 
     def compare_runs(self, run_a: str, run_b: str) -> RunComparison:
         """What changed between two Runs of one Connection, oldest first, over the scope both
         measured only."""
         a, b = self._store.get_run(run_a), self._store.get_run(run_b)
         if a.connection_id != b.connection_id:
-            raise ValueError("Runs of different Connections cannot be compared")
+            raise RunsNotComparable("Runs of different Connections cannot be compared")
         by_fingerprint = {f.fingerprint: f for f in self._store.findings(a.connection_id)}
 
         def seen(run: Run) -> list[Finding]:
@@ -272,6 +328,9 @@ class AnalyzerService:
         return (report.json_export(view) if fmt == "json" else report.markdown(view)).encode()
 
     def audit(self, connection_id: str, thread_id: str | None = None) -> list[AuditEntry]:
+        """Every statement executed or rejected on the Connection, oldest first; with
+        `thread_id`, only that Thread's."""
+        self._store.get_connection(connection_id)
         return self._store.audit(connection_id, thread_id)
 
     # --- Threads and the agent ------------------------------------------------------------
@@ -291,7 +350,18 @@ class AnalyzerService:
 
     def usage(self, thread_id: str) -> Usage:
         """Tokens and estimated cost of every model request in the Thread so far."""
-        requests = self._store.llm_requests(thread_id)
+        self._store.get_thread(thread_id)
+        return self._usage(self._store.llm_requests(thread_id))
+
+    def usage_in_month(self, month: date | None = None) -> Usage:
+        """Tokens and estimated cost across every Thread in the calendar month (UTC) holding
+        `month`, by default the current one. Cost is None when any request's cost is unknown."""
+        first = (month or datetime.now(UTC).date()).replace(day=1)
+        after = (first + timedelta(days=32)).replace(day=1)
+        start, end = (datetime.combine(d, time(), UTC) for d in (first, after))
+        return self._usage(self._store.llm_requests_between(start, end))
+
+    def _usage(self, requests: list[LLMRequestLog]) -> Usage:
         costs = [r.cost_usd for r in requests]
         return Usage(
             model=", ".join(sorted({r.model for r in requests})) or self._llm.model,
@@ -301,25 +371,92 @@ class AnalyzerService:
             cost_usd=None if None in costs else sum(c for c in costs if c is not None),
         )
 
-    async def send(self, thread_id: str, message: str) -> AsyncIterator[AgentEvent]:
-        """One Turn: stream the agent's events for `message`, ending with Usage and Done."""
+    def threads(self, connection_id: str) -> list[Thread]:
+        """The Connection's Threads, latest activity first."""
+        self._store.get_connection(connection_id)
+        return self._store.threads(connection_id)
+
+    async def history(self, thread_id: str) -> list[ThreadMessage]:
+        """The Thread's messages and the agent's final answers, in order, from its checkpoint.
+        Tool calls and SQL are not replayed: the audit log holds them. Needs no model key."""
         thread = self._store.get_thread(thread_id)
+        known = self._store.aliases(thread.connection_id)
+        aliases = Aliases(known) if known else None
+        async with AsyncSqliteSaver.from_conn_string(str(self._checkpoints)) as cp:
+            model = make_model(self._llm, offline=True)
+            agent, _ = self._agent(thread, AgentTurn(self, thread), cp, model, aliases)
+            state = await agent.aget_state({"configurable": {"thread_id": thread.id}})
+        messages = state.values.get("messages", [])
+        return [h for m in messages if (h := _history_message(m, aliases))]
+
+    def send(self, thread_id: str, message: str) -> AsyncIterator[AgentEvent]:
+        """One Turn: stream the agent's events for `message`, ending with Usage and Done.
+
+        A Thread has at most one Turn at a time: the Turn is claimed now, so this raises
+        TurnActive (and KeyError for an unknown Thread) before anything streams. Iterate the
+        result to run the Turn; dropping it unread releases the Thread."""
+        thread = self._store.get_thread(thread_id)
+        active = self._turns.claim(thread.id)
+        try:
+            self._store.turn_started(thread.id, message)
+        except BaseException:
+            self._turns.release(thread.id, active)
+            raise
+        turn = self._turn(thread, message, active)
+        weakref.finalize(turn, self._turns.release, thread.id, active)
+        return turn
+
+    def cancel(self, thread_id: str) -> bool:
+        """Cancel the Thread's Turn in progress, if any: its stream stops at the next await
+        point and still ends with Usage, then Done with `cancelled`. Returns whether a Turn was
+        running (and not already cancelled). Safe to call from any thread."""
+        self._store.get_thread(thread_id)
+        return self._turns.cancel(thread_id)
+
+    async def _turn(
+        self, thread: Thread, message: str, active: "_ActiveTurn"
+    ) -> AsyncIterator[AgentEvent]:
+        state = _TurnState()
+        try:
+            stop = active.start()
+            async for event in _until_set(stop, self._agent_events(thread, message, state)):
+                yield event
+                if isinstance(event, Done):  # the Turn ended before reaching the model
+                    return
+            for event in state.translator.flush():
+                yield event
+            yield state.gateway.usage() if state.gateway else self._usage([])
+            yield Done(
+                thread_id=thread.id,
+                answer=state.translator.answer,
+                ok=not (state.failed or active.cancelled),
+                cancelled=active.cancelled,
+            )
+        finally:
+            self._turns.release(thread.id, active)
+
+    async def _agent_events(
+        self, thread: Thread, message: str, state: "_TurnState"
+    ) -> AsyncIterator[AgentEvent]:
+        """The agent's events for one Turn. What ends the Turn (the remaining translated text,
+        usage, Done) is left to the caller, which may have cancelled it; `state` carries what it
+        needs."""
         settings = self._llm
-        failed = False
         try:
             aliases = await asyncio.to_thread(self._aliases, thread)
         except (QueryRejected, ConnectionRefused, psycopg.Error) as e:
             yield Error(message=f"cannot list identifiers to alias: {e}")
             yield Done(thread_id=thread.id, answer="", ok=False)
             return
-        translator = Translator(aliases)
+        state.translator = translator = Translator(aliases)
         config: Any = {"configurable": {"thread_id": thread.id}}
         async with (
-            AsyncSqliteSaver.from_conn_string(str(self._home / "checkpoints.sqlite")) as cp,
+            AsyncSqliteSaver.from_conn_string(str(self._checkpoints)) as cp,
             httpx.AsyncClient(timeout=settings.request_timeout_s) as http,
         ):
-            agent, gateway = self._agent(thread, AgentTurn(self, thread), cp, http, aliases)
-            gateway.cassette = _cassette(settings, await _turns_so_far(agent, config))
+            model = make_model(settings, http)
+            agent, state.gateway = self._agent(thread, AgentTurn(self, thread), cp, model, aliases)
+            state.gateway.cassette = _cassette(settings, await _turns_so_far(agent, config))
             try:
                 async for namespace, mode, chunk in agent.astream(
                     {"messages": [HumanMessage(content=message)]},
@@ -332,20 +469,17 @@ class AnalyzerService:
             except (CassetteExhausted, CassetteMismatch):
                 raise  # a stale recording must fail the test, not become an event
             except Exception as e:  # the Turn ends; the Thread stays usable
-                failed = True
+                state.failed = True
                 yield Error(message=f"{type(e).__name__}: {e}")
-        for event in translator.flush():
-            yield event
-        yield gateway.usage()
-        yield Done(thread_id=thread.id, answer=translator.answer, ok=not failed)
 
     def studio_graph(self, connection_name: str) -> Any:
         """The agent for LangGraph Studio, which brings its own checkpointer. One Thread per
         Studio server session records the SQL audit and model requests."""
         thread = self.start_thread(self.connection(connection_name).id)
         turn = AgentTurn(self, thread)
+        model = make_model(self._llm)
         agent, _ = self._agent(
-            thread, turn, None, None, self._aliases(thread), extra=[NewTurn(turn)]
+            thread, turn, None, model, self._aliases(thread), extra=[NewTurn(turn)]
         )
         return agent
 
@@ -354,7 +488,7 @@ class AnalyzerService:
         thread: Thread,
         turn: "AgentTurn",
         checkpointer: Any,
-        http: httpx.AsyncClient | None,
+        model: BaseChatModel,
         aliases: Aliases | None,
         extra: Sequence[Any] = (),
     ) -> tuple[Any, LLMGateway]:
@@ -370,7 +504,6 @@ class AnalyzerService:
             gateway,  # shared with subagents: one concurrency cap, log and cassette per Turn
         ]
         tools = build_tools(turn, self.capabilities(thread.connection_id))
-        model = make_model(settings, http)
         return build_agent(model, tools, middleware, checkpointer, extra), gateway
 
     def _aliases(self, thread: Thread) -> Aliases | None:
@@ -397,7 +530,7 @@ class AnalyzerService:
     ) -> Iterator[SafeExecutor]:
         dsn = os.environ.get(connection.dsn_env)
         if not dsn:
-            raise ConnectionRefused(f"environment variable {connection.dsn_env} is not set")
+            raise DsnEnvMissing(connection.dsn_env)
 
         def audit(entry: AuditEntry) -> None:
             self._store.record_audit(entry)
@@ -546,6 +679,120 @@ class NewTurn(AgentMiddleware[Any, Any, Any]):
 
     def before_agent(self, state: Any, runtime: Any) -> None:
         self._turn.new_turn()
+
+
+@dataclass
+class _TurnState:
+    """What ending a Turn needs from the part that ran the agent."""
+
+    translator: Translator = field(default_factory=Translator)
+    gateway: LLMGateway | None = None
+    failed: bool = False
+
+
+class _ActiveTurn:
+    """A claimed Turn. Cancelling it sets an event on the loop that runs it, from any thread."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop: asyncio.Event | None = None
+
+    def start(self) -> asyncio.Event:
+        """On the loop that runs the Turn: the event that stops it."""
+        with self._lock:
+            self._loop, self._stop = asyncio.get_running_loop(), asyncio.Event()
+            if self.cancelled:
+                self._stop.set()
+            return self._stop
+
+    def cancel(self) -> bool:
+        with self._lock:
+            if self.cancelled:
+                return False
+            self.cancelled = True
+            if self._loop is not None and self._stop is not None:
+                self._loop.call_soon_threadsafe(self._stop.set)
+            return True
+
+
+class _Turns:
+    """The Turn in progress in each Thread of this process."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active: dict[str, _ActiveTurn] = {}
+
+    def claim(self, thread_id: str) -> _ActiveTurn:
+        with self._lock:
+            if thread_id in self._active:
+                raise TurnActive(thread_id)
+            turn = self._active[thread_id] = _ActiveTurn()
+            return turn
+
+    def release(self, thread_id: str, turn: _ActiveTurn) -> None:
+        with self._lock:
+            if self._active.get(thread_id) is turn:
+                del self._active[thread_id]
+
+    def cancel(self, thread_id: str) -> bool:
+        with self._lock:
+            turn = self._active.get(thread_id)
+        return turn is not None and turn.cancel()
+
+
+_END = object()
+
+
+async def _until_set[T](stop: asyncio.Event, events: AsyncIterator[T]) -> AsyncIterator[T]:
+    """`events` until `stop` is set. They are produced in a task of their own, which is
+    cancelled when `stop` is set or the consumer stops, so the producer is interrupted at its
+    next await point."""
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+
+    async def produce() -> None:
+        try:
+            async for event in events:
+                queue.put_nowait(event)
+            queue.put_nowait(_END)
+        except Exception as e:
+            queue.put_nowait(e)
+
+    producer = asyncio.create_task(produce())
+    stopping = asyncio.create_task(stop.wait())
+    try:
+        while True:
+            getting = asyncio.create_task(queue.get())
+            await asyncio.wait({getting, stopping}, return_when=asyncio.FIRST_COMPLETED)
+            if not getting.done():
+                getting.cancel()
+                return
+            item = getting.result()
+            if item is _END:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        stopping.cancel()
+        producer.cancel()
+        with suppress(asyncio.CancelledError):
+            await producer
+
+
+def _history_message(m: BaseMessage, aliases: Aliases | None) -> ThreadMessage | None:
+    """The user's messages as typed; the agent's final answers with real names, as they were
+    shown. Preambles to tool calls and turn-limit notices are left out."""
+    if isinstance(m, HumanMessage):
+        return ThreadMessage("user", m.text)
+    if isinstance(m, AIMessage) and not m.tool_calls and m.name != TURN_LIMIT and m.text:
+        return ThreadMessage("agent", aliases.unalias(m.text) if aliases else m.text)
+    return None
+
+
+def _info(c: Connection) -> ConnectionInfo:
+    return ConnectionInfo(**vars(c), dsn_env_set=bool(os.environ.get(c.dsn_env)))
 
 
 def _stream_writer() -> Callable[[Any], None]:

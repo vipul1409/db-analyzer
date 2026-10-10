@@ -19,7 +19,10 @@ uv run dbx ack prod bloat:public.orders     # acknowledge; `dbx fixed` confirms 
 uv run dbx runs prod                        # past Runs, then `dbx compare prod <run> <run>` over their shared scope
 uv run --env-file .env dbx chat prod        # chat with the agent (needs OPENAI_API_KEY)
 uv run --env-file .env dbx chat prod --thread <id>   # resume a conversation, even after a restart
+uv run --env-file .env dbx serve            # the HTTP API on 127.0.0.1:8765 (--host, --port)
 ```
+
+`dbx serve` offers everything above over HTTP, for the web UI: Connections and their probe, deterministic Runs, Findings and their status, Run comparison and export, the audit log, Threads and their history, and usage by Thread or by month. The CLI and the API share one local store. A message to a Thread streams the Turn's events as Server-Sent Events, including `subagent_started` and `subagent_finished`. A Thread runs one Turn at a time. `POST /api/threads/{id}/cancel`, or closing the stream, cancels the Turn, and the stream still ends with `usage` and `done`. Everything but chat works without `OPENAI_API_KEY`. The API takes a DSN's environment-variable name, never the DSN, so the variable has to be set where `dbx serve` runs. Set `DBX_API_TOKEN` to require it as a bearer token on every request but `/api/health`. The API listens beyond loopback only with a token. The interactive OpenAPI docs are at `/docs`, and the contract is committed as `web/openapi.json`. `AnalyzerService` and the event stream are frozen at v1 (ADR 0016).
 
 `dbx chat` streams the answer and shows each tool call and every SQL statement as it runs, including those of the subagent it delegates to: "Analyse storage" goes to the inventory-analyst, which answers with Findings ranked by severity (bloat, stale statistics, tables with more index than heap, oversized TOAST). "What's slow?" goes to the workload-analyst, which records a workload Run and explains the ranked statements from their plan rules; a follow-up such as "why is query #3 slow?" reads that Run again (the Thread's latest, else the Connection's) and sends no SQL and makes no Run (ADR 0013). Beyond its dedicated tools, the agent may write its own read-only SQL; any statement whose output could carry row values (`SELECT email …`) is rejected before it runs, so the LLM sees only metadata, aggregates and entity keys. With `--alias-identifiers`, names reach the LLM only as aliases (`table_3`) and `dbx chat` shows the real ones. Each conversation is a Thread bound to one Connection; the agent's model is `DBX_MODEL` (default `gpt-5.4-mini`). A turn stops cleanly at 200k tokens or 60 tool calls.
 
@@ -48,6 +51,13 @@ make check                  # lint, types, unit tests
 make db-up                  # start the Postgres 17 fixture (port 5417)
 make test-integration       # integration tests against PG 17
 make db-down                # stop and remove the fixtures
+```
+
+The web UI's API client is generated from the API: `web/openapi.json` and `web/src/api/schema.d.ts` are committed, and CI fails when they drift from the code. After changing the API, regenerate them (needs Node 24; run `npm --prefix web ci` once):
+
+```sh
+make api-client             # export the OpenAPI spec and regenerate the TypeScript client
+make web-check              # typecheck web/
 ```
 
 ### Synthetic dataset

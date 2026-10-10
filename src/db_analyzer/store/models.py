@@ -123,6 +123,8 @@ class ThreadRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     connection_id: Mapped[str] = mapped_column(ForeignKey("connections.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    preview: Mapped[str | None] = mapped_column(Text)  # the start of the first message
 
 
 class LLMRequestRow(Base):

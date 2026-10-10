@@ -51,7 +51,7 @@ A conversation with the agent, bound to one Connection for its whole life.
 _Avoid_: Session, chat (as the stored record)
 
 **Turn**:
-One user message in a Thread and everything the agent does to answer it. A Turn may start Runs, or only explain data already collected.
+One user message in a Thread and everything the agent does to answer it. A Turn may start Runs, or only explain data already collected. A Thread has at most one Turn in progress. A Turn can be **cancelled**: it ends with what it had done so far, and the Thread carries on. A cancelled Turn is not a failed one.
 _Avoid_: Run (a Turn is a conversational step, not an analysis record), request
 
 **Finding**:
