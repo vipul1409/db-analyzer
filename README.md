@@ -1,6 +1,6 @@
 # DB Analyzer
 
-A conversational agent that analyses a PostgreSQL database through a read-only login. See `docs/proposal.md` for the design, `docs/execution-plan.md` for the plan and `CONTEXT.md` for the domain glossary.
+A conversational agent that analyses a PostgreSQL database through a read-only login. See `docs/proposal.md` for the design, `docs/execution-plan.md` for the plan, `CONTEXT.md` for the domain glossary, and `docs/demo-and-architecture.md` for an end-to-end demo script and how the agent is built.
 
 ## Usage
 
