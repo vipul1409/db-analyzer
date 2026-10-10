@@ -10,6 +10,12 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 | `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
 | `wontfix`                  | `wontfix`            | Will not be actioned                     |
 
+Outside the triage roles, this repo also uses:
+
+| Label    | Meaning                                                                                  |
+| -------- | ---------------------------------------------------------------------------------------- |
+| `paused` | Specified, but deliberately not being worked on now (ADR 0015). Never also `ready-for-agent`; resume by swapping the labels back |
+
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
 Edit the right-hand column to match whatever vocabulary you actually use.

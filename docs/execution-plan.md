@@ -4,7 +4,7 @@
 |---|---|
 | **Based on** | `docs/proposal.md` (Draft v3: OpenAI API, Postgres 15+, self-managed + Azure), glossary in `CONTEXT.md`, decisions in `docs/adr/` |
 | **Builder** | 1 engineer, half time (≈ 2.5 focused days / week) |
-| **Order** | Agent first (usable from CLI + LangGraph Studio) → API layer → Web UI |
+| **Order** | Agent first (usable from CLI + LangGraph Studio) → API layer → Web UI. **Re-planned 10 Oct 2026 (ADR 0015):** agent paused after M4; API and UI next, on the current agent |
 | **Tracking** | GitHub Issues + GitHub Projects |
 | **Test data** | Synthetic Docker databases only (no real DB yet) |
 | **Start** | Mon 12 Oct 2026 |
@@ -13,6 +13,17 @@
 ---
 
 ## 1. Summary
+
+**Re-plan, 10 Oct 2026 (ADR 0015).** Phase A stops after M4. Index health (M5-05), Run comparison and report export (M7-04) are done too. The rest of M5–M7 is paused, and its tickets carry the `paused` label. The API (M8) and UI (M9) are built next on the current agent, then the release (M10). The table below is the original plan, kept for reference. The current order is:
+
+| Phase | Milestones | Effort (days, incl. 20% buffer) | Calendar (half time) | Outcome |
+|---|---|---|---|---|
+| **B. API** | M8 | ≈ 11 | 12 Oct → ~13 Nov 2026 | FastAPI service on the frozen v1 facade and event stream |
+| **C. UI** | M9 | ≈ 14 | → ~22 Dec 2026 | Web UI: connections, chat with progress panel, Runs, Findings, audit and usage |
+| **Release** | M10 | ≈ 7 | → ~mid Jan 2027 | Packaged v1, docs, PG 15–18 matrix, real-DB and Azure validation |
+| **A. Agent (paused)** | M5–M7 remainder | ≈ 20 | after the release, if resumed | Index advice, entity map and hotspots, full analysis, evals |
+
+Original plan:
 
 | Phase | Milestones | Effort (days, incl. 20% buffer) | Calendar (half time) | Outcome |
 |---|---|---|---|---|
@@ -164,6 +175,8 @@ Thinnest end-to-end path: terminal chat → agent → one capability → databas
 
 ### M5: Index advisor (5 d) · target ~13 Feb 2027
 
+**Paused (ADR 0015)**, except M5-05 (index health), which is done.
+
 | ID | Task | Est. | Done when |
 |---|---|---|---|
 | M5-01 | Candidate generation (equality → range → sort ordering, FK columns) | 1.5 | Expected candidates for seeded queries |
@@ -174,6 +187,8 @@ Thinnest end-to-end path: terminal chat → agent → one capability → databas
 | M5-06 | `index-advisor` subagent; DDL output as `CREATE INDEX CONCURRENTLY` text only | 1 | Advice with DDL in chat/report |
 
 ### M6: Entity hotspots (7 d) · target ~8 Mar 2027
+
+**Paused (ADR 0015).** This includes entity-key hashing (ADR 0001): no entity key reaches the LLM until the entity map exists.
 
 | ID | Task | Est. | Done when |
 |---|---|---|---|
@@ -186,6 +201,12 @@ Thinnest end-to-end path: terminal chat → agent → one capability → databas
 | M6-07 | `hotspot-analyst` subagent + skew metrics + findings; targeted questions create a Run scoped to the collections asked about | 1 | "Which tenant uses most space in `events`?" answered and recorded as a scoped Run |
 
 ### M7: Agent hardening and model selection (7 d) · target ~1 Apr 2027 · **agent complete**
+
+**Paused (ADR 0015)**, except for the following:
+- M7-04 (report export and Run comparison) is done.
+- M7-05 (budget cap) is paused, and the UI shows usage instead.
+- The facade freeze from the exit gate moves to M8-01.
+- M7-07 (docs) moves to M10-03.
 
 | ID | Task | Est. | Done when |
 |---|---|---|---|
@@ -203,42 +224,50 @@ Thinnest end-to-end path: terminal chat → agent → one capability → databas
 
 ## 5. Phase B and C: API and UI (M8–M10)
 
-### M8: API layer (7 d) · target ~24 Apr 2027
+Re-planned 10 Oct 2026 (ADR 0015): built on the agent as it is after M4, for one engineer running locally.
+
+### M8: API layer (9 d) · target ~13 Nov 2026
 
 | ID | Task | Est. | Done when |
 |---|---|---|---|
-| M8-01 | FastAPI app skeleton, settings, error model, bind to `127.0.0.1` by default + optional static token | 0.5 | Health endpoint, auth test |
-| M8-02 | Connections: CRUD, test/probe, safety-limit overrides | 1.5 | Endpoints + tests |
-| M8-03 | Threads and messages: `POST /threads/{id}/messages` streaming `AgentEvent` over SSE | 1.5 | Event stream matches CLI |
-| M8-04 | Interrupt resume endpoint (entity map) | 0.5 | Resume over HTTP works |
-| M8-05 | Findings (filter, status update) + Observations per Finding, audit, usage, Runs, export endpoints | 1.5 | Endpoints + tests |
-| M8-06 | Cancellation (stop a running turn) and concurrency (one active run per thread) | 0.5 | Cancel mid-run cleanly |
-| M8-07 | OpenAPI spec + generated TypeScript client (`openapi-typescript`) | 0.5 | Client builds in `web/` |
-| M8-08 | API integration tests using recorded LLM cassettes | 0.5 | In CI |
+| M8-01 | Shape `AnalyzerService` for HTTP (list Connections and Threads, cancel a Turn); add `subagent_started` / `subagent_finished` events; freeze facade and `AgentEvent` at v1 in an ADR (from M7's exit gate, #26) | 1.5 | CLI and tests unchanged in behaviour; ADR records v1 |
+| M8-02 | FastAPI app skeleton, settings, error model, bind to `127.0.0.1` by default + optional static token | 0.5 | Health endpoint, auth test |
+| M8-03 | Connections: create/update (DSN by env var name only, never stored), probe, session and gate limits, identifier aliasing | 1.5 | Endpoints + tests; a missing env var is a clear error |
+| M8-04 | Threads and messages: `POST /threads/{id}/messages` streaming `AgentEvent` over SSE | 1.5 | Event stream matches CLI |
+| M8-05 | Cancellation (`POST /threads/{id}/cancel`) and one active Turn per Thread | 0.5 | Cancel mid-turn cleanly; a second concurrent Turn is refused |
+| M8-06 | Deterministic Runs without chat: inventory, workload, targeted tables, exact counts | 0.5 | Same Runs as `dbx analyze`, no LLM needed |
+| M8-07 | Findings (filter, status update) + Observations per Finding, Runs, Run comparison, audit, usage, export endpoints | 1.5 | Endpoints + tests |
+| M8-08 | OpenAPI spec + generated TypeScript client (`openapi-typescript`) | 0.5 | Client builds in `web/`; CI fails when it drifts |
+| M8-09 | API integration tests using recorded LLM cassettes | 0.5 | In CI |
 
-### M9: Web UI (12 d) · target ~4 Jun 2027
+Cut from the original M8: the entity-map interrupt resume endpoint (returns with M6).
+
+### M9: Web UI (11.5 d) · target ~22 Dec 2026
 
 | ID | Task | Est. | Done when |
 |---|---|---|---|
 | M9-01 | Vite + React + TypeScript scaffold, routing, design tokens, generated API client | 1 | App shell renders |
 | M9-02 | Connection manager: add/test connection, probe "what I can see", primary/replica banner | 1.5 | Usable end to end |
 | M9-03 | Chat view: SSE streaming, markdown, inline tables, stop button | 2.5 | Parity with CLI chat |
-| M9-04 | Run progress panel: orchestrator todos, subagent status, SQL executed/rejected live | 1.5 | Live during full analysis |
-| M9-05 | Entity-map confirmation form (interrupt) | 1 | Accept/edit/resume from UI |
-| M9-06 | Findings board: filter by category/severity/status (obsolete hidden by default), Observation history per Finding, DDL copy, acknowledge/fixed, "fixed?" confirmations | 2 | Persists via API |
+| M9-04 | Progress panel: tools, subagents, SQL executed/rejected (with reason), Runs finished, limits reached, live | 1.5 | Live during a Turn |
+| M9-05 | Analyze action: start inventory or workload Runs (targeted tables, exact counts) without chat | 1 | Run appears with its Findings |
+| M9-06 | Findings board: filter by category/severity/status (obsolete hidden by default), Observation history per Finding, DDL copy, acknowledge/fixed, "fixed?" confirmations; Runs list and comparison | 2 | Persists via API |
 | M9-07 | Audit panel + usage/cost display | 1 | Matches DB audit log |
 | M9-08 | Safety-limit editor + report export buttons | 0.5 | Works |
 | M9-09 | Component tests (Vitest) | 1 | Key components covered |
 
-### M10: Release (4 d) · target ~17 Jun 2027
+Cut from the original M9: the entity-map confirmation form (returns with M6) and orchestrator todos in the progress panel (return with M7-03).
+
+### M10: Release (6 d) · target ~mid Jan 2027
 
 | ID | Task | Est. | Done when |
 |---|---|---|---|
-| M10-01 | Playwright e2e: connect → full analysis → confirm entity map → findings → export | 1.5 | Green in CI with cassettes |
+| M10-01 | Playwright e2e: connect → analyze → chat "what's slow?" → findings → export | 1.5 | Green in CI with cassettes |
 | M10-02 | Packaging: Docker image (API serves built UI) + compose file; `pipx`-installable CLI | 1 | One-command start |
-| M10-03 | Docs: install, security model, data sent to OpenAI, troubleshooting | 0.5 | Docs reviewed |
-| M10-05 | Real-DB validation run on a staging/replica DB and one Azure Flexible Server (needs data-governance approval) | 0.5 | Findings reviewed; gaps filed as issues |
+| M10-03 | Docs: install, security model, data sent to OpenAI, config reference, troubleshooting; a fresh checkout reaches a report from the docs alone (the docs half of #26) | 1 | Docs reviewed |
 | M10-04 | v1.0 release checklist and tag | 0.5 | Release published |
+| M10-05 | Real-DB validation run on a staging/replica DB and one Azure Flexible Server, including the live Query Store check deferred by #17 (needs data-governance approval) | 0.5 | Findings reviewed; gaps filed as issues |
+| M10-06 | Restore the PG 14–18 integration test matrix in fixtures and CI (#27) | 1 | CI green on the full matrix |
 
 ---
 
@@ -317,6 +346,8 @@ flowchart LR
   M9 --> M10[M10 Release]
 ```
 
+Since the re-plan (ADR 0015), M8 follows M4 directly. M5–M7 are paused, and their remaining work comes after M10 if it is resumed.
+
 Solo work means milestones run in sequence even where the graph allows parallel work; M3 and M4 could swap if slow-query analysis is the more urgent demo.
 
 | Risk | Impact | Response |
@@ -327,7 +358,7 @@ Solo work means milestones run in sequence even where the graph allows parallel 
 | Synthetic data misses real-world patterns | Surprises at first real run | Real-DB validation run as a v1 exit item |
 | Scope creep from UI ideas | Phase C slips | UI scope fixed to M9 table; anything else goes to backlog |
 
-**Cut list if time is short** (in order): Azure Query Store provider (M4-02) → index health (M5-05) → hierarchy roll-up (M6-05) → run-to-run comparison (M7-04) → safety-limit editor in UI (M9-08). Cutting all five saves ≈ 4.5 days incl. buffer (≈ 2 weeks half time).
+**Cut list if time is short** (in order; since the re-plan, the first four are done or paused): Azure Query Store provider (M4-02) → index health (M5-05) → hierarchy roll-up (M6-05) → run-to-run comparison (M7-04) → safety-limit editor in UI (M9-08). Cutting all five saves ≈ 4.5 days incl. buffer (≈ 2 weeks half time).
 
 ---
 
