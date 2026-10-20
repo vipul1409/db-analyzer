@@ -17,3 +17,10 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: gitleaks
+        name: gitleaks
+        # Scan only the staged changes (uses .gitleaks.toml). Needs gitleaks on PATH:
+        # `brew install gitleaks`. CI runs the full-history scan separately.
+        entry: gitleaks git --pre-commit --staged --redact --no-banner
+        language: system
+        pass_filenames: false
