@@ -1,0 +1,15 @@
+# gitleaks config. Extends the built-in ruleset; only adds an allowlist so the
+# committed example/placeholder values don't trip the scan.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Example and placeholder values, not real secrets"
+paths = [
+  '''\.env\.example$''',
+]
+regexes = [
+  '''REPLACE_ME''',
+  # The demo DSN uses a throwaway local password equal to the username.
+  '''postgresql://db_analyzer:db_analyzer@''',
+]
