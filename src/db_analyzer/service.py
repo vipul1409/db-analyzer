@@ -1,6 +1,7 @@
 """AnalyzerService: the single entry point for the CLI, LangGraph Studio, the API and tests."""
 
 import asyncio
+import logging
 import os
 import threading
 import weakref
@@ -84,6 +85,7 @@ from db_analyzer.store.store import Store
 
 CURRENT_STATUSES: tuple[FindingStatus, ...] = ("open", "acknowledged", "fixed")  # not obsolete
 SqlObserver = Callable[[AuditEntry], None]
+logger = logging.getLogger(__name__)
 
 
 class TurnActive(Exception):
@@ -183,6 +185,7 @@ class AnalyzerService:
         collections: Sequence[str] | None = None,
         exact_counts: bool = False,
         min_stats_window: timedelta = workload.MIN_STATS_WINDOW,
+        workload_window: timedelta | None = workload.DEFAULT_WORKLOAD_WINDOW,
     ) -> Run:
         """A deterministic Run, no LLM: probe, collect with each analyzer, record Findings and
         Observations, then move the Connection's Findings through their lifecycle.
@@ -192,15 +195,30 @@ class AnalyzerService:
         also counts their rows with count(*), each only where the EXPLAIN gate allows.
 
         `workload` ranks the most expensive statements, and refuses to when its statistics are
-        younger than `min_stats_window`. With no workload source it reviews the schema instead
-        (ADR 0010). Either way the Run is partial when no ranking was made.
+        younger than `min_stats_window`. `workload_window` reads only statements recorded within
+        that span from a per-interval source (Azure Query Store), the last 14 days by default;
+        None reads all of its retention. With no workload source it reviews the schema instead
+        (ADR 0010). Either way the Run is
+        partial when no ranking was made.
 
         Raises `runs.UnknownAnalyzer`, or `runs.OptionsNotAccepted` for an option none of
         `analyzers` accepts."""
-        options = runs.RunOptions(collections, exact_counts, min_stats_window)
+        options = runs.RunOptions(collections, exact_counts, min_stats_window, workload_window)
         chosen = runs.chosen_analyzers(analyzers, options)
         connection = self._store.get_connection(connection_id)
         run = self._store.start_run(connection.id, thread_id)
+        logger.info(
+            "run %s start: connection=%s analyzers=%s workload_window=%s min_stats_window=%s "
+            "exact_counts=%s collections=%s thread=%s",
+            run.id,
+            connection.name,
+            list(analyzers),
+            workload_window,
+            min_stats_window,
+            exact_counts,
+            collections,
+            thread_id,
+        )
         try:
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
@@ -212,11 +230,15 @@ class AnalyzerService:
                 self._store.save_workload(run.id, outcome.workload)
             self._store.record_observations(connection.id, run.id, outcome.found)
         except BaseException:
+            logger.exception("run %s failed", run.id)
             self._store.finish_run(run.id, "failed", scope={}, skipped={})
             raise
+        if outcome.workload is not None and outcome.workload.refused:
+            logger.warning("run %s workload refused: %s", run.id, outcome.workload.refused)
         run = self._store.finish_run(
             run.id, outcome.status, scope=outcome.scope, skipped=outcome.skipped
         )
+        logger.info("run %s finished: status=%s", run.id, run.status)
         changed = lifecycle.after_run(
             run,
             self._store.findings(connection.id),
@@ -568,6 +590,11 @@ class AgentTurn:
         self._budget.reset()
 
     def probe(self) -> dict[str, Any]:
+        logger.info(
+            "agent tool: probe connection=%s thread=%s",
+            self._thread.connection_id,
+            self._thread.id,
+        )
         return self._guarded(
             lambda emit: digest.probe(
                 self._service.probe(
@@ -577,6 +604,10 @@ class AgentTurn:
         )
 
     def storage(self, top_n: int) -> dict[str, Any]:
+        logger.info(
+            "agent tool: get_storage(top_n=%d) connection=%s", top_n, self._thread.connection_id
+        )
+
         def measure(emit: Callable[[Any], None]) -> dict[str, Any]:
             run = self._service.run(
                 self._thread.connection_id,
@@ -591,6 +622,12 @@ class AgentTurn:
         return self._guarded(measure)
 
     def count_exact(self, tables: list[str], all_tables: bool) -> dict[str, Any]:
+        logger.info(
+            "agent tool: count_exact(all_tables=%s, tables=%s) connection=%s",
+            all_tables,
+            tables,
+            self._thread.connection_id,
+        )
         if not tables and not all_tables:
             return {"error": "name the tables to count, or set all_tables"}
 
@@ -610,6 +647,9 @@ class AgentTurn:
         return self._guarded(count)
 
     def sql(self, sql: str, purpose: str) -> dict[str, Any]:
+        logger.info(
+            "agent tool: run_sql purpose=%r connection=%s", purpose, self._thread.connection_id
+        )
         return self._guarded(
             lambda emit: digest.sql_result(
                 self._service.run_sql(
@@ -624,6 +664,13 @@ class AgentTurn:
         )
 
     def top_queries(self, top_n: int) -> dict[str, Any]:
+        logger.info(
+            "agent tool: get_top_queries(top_n=%d) connection=%s thread=%s",
+            top_n,
+            self._thread.connection_id,
+            self._thread.id,
+        )
+
         def rank(emit: Callable[[Any], None]) -> dict[str, Any]:
             run = self._service.run(
                 self._thread.connection_id,

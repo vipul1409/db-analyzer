@@ -19,7 +19,7 @@ from starlette.types import Receive, Scope, Send
 import db_analyzer
 from db_analyzer import runs
 from db_analyzer.agent.events import AgentEvent, Usage
-from db_analyzer.analyzers.workload import MIN_STATS_WINDOW
+from db_analyzer.analyzers.workload import DEFAULT_WORKLOAD_WINDOW, MIN_STATS_WINDOW
 from db_analyzer.api import errors
 from db_analyzer.api.errors import ApiError
 from db_analyzer.core.comparison import RunComparison
@@ -61,13 +61,16 @@ class RunIn(BaseModel):
     """A deterministic Run: no model. `collections` targets inventory at those tables
     (schema-qualified, or bare when unambiguous) and `exact_counts` counts their rows, each only
     where the EXPLAIN gate allows. `min_stats_window_hours` is how young workload statistics
-    may be before ranking is refused (default 1 h). Options no chosen analyzer takes are
-    refused."""
+    may be before ranking is refused (default 1 h). `workload_window_days` reads only statements
+    recorded in the last N days from Azure Query Store; omitted or null uses the default of 14,
+    and 0 reads all of its retention, which a large Query Store history may be refused for (too
+    many rows). Options no chosen analyzer takes are refused."""
 
     analyzers: list[str] = Field(default_factory=lambda: [str(a) for a in runs.DEFAULT])
     collections: list[str] | None = None
     exact_counts: bool = False
     min_stats_window_hours: float | None = Field(default=None, ge=0)
+    workload_window_days: float | None = Field(default=None, ge=0)
 
 
 class StatusIn(BaseModel):
@@ -186,12 +189,21 @@ def create_app(service: AnalyzerService, token: str | None = None) -> FastAPI:
     def start_run(connection_id: str, body: RunIn) -> Run:
         """Run the analyzers and return the finished Run. Blocks until it finishes."""
         window = body.min_stats_window_hours
+        days = body.workload_window_days
         return service.run(
             connection_id,
             body.analyzers,
             collections=body.collections,
             exact_counts=body.exact_counts,
             min_stats_window=MIN_STATS_WINDOW if window is None else timedelta(hours=window),
+            # Omitted/null is the 14-day default; 0 reads all of retention; else that many days.
+            workload_window=(
+                DEFAULT_WORKLOAD_WINDOW
+                if days is None
+                else None
+                if days == 0
+                else timedelta(days=days)
+            ),
         )
 
     @api.get("/connections/{connection_id}/runs", tags=["runs"])

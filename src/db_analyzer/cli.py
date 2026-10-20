@@ -18,7 +18,7 @@ from rich.table import Table
 
 from db_analyzer.agent.events import AgentEvent
 from db_analyzer.agent.llm import LLMConfigError
-from db_analyzer.analyzers.workload import MIN_STATS_WINDOW
+from db_analyzer.analyzers.workload import DEFAULT_WORKLOAD_WINDOW, MIN_STATS_WINDOW
 from db_analyzer.api import create_app
 from db_analyzer.core.model import (
     Connection,
@@ -34,6 +34,7 @@ from db_analyzer.core.model import (
 )
 from db_analyzer.core.run_view import RunView
 from db_analyzer.core.units import format_bytes
+from db_analyzer.logconfig import setup_logging
 from db_analyzer.runs import DEFAULT as DEFAULT_ANALYZERS
 from db_analyzer.runs import OptionsNotAccepted, RunOptions, UnknownAnalyzer, chosen_analyzers
 from db_analyzer.service import CURRENT_STATUSES, AnalyzerService
@@ -43,10 +44,12 @@ API_TOKEN_ENV = "DBX_API_TOKEN"
 console = Console()
 
 MIN_STATS_WINDOW_HOURS = MIN_STATS_WINDOW.total_seconds() / 3600
+WORKLOAD_WINDOW_DAYS = DEFAULT_WORKLOAD_WINDOW.total_seconds() / 86400
 _OPTION_FLAGS = {
     "collections": "--table",
     "exact_counts": "--exact-counts",
     "min_stats_window": "--min-stats-window",
+    "workload_window": "--workload-window-days",
 }
 WANTED_EXTENSIONS = ("pg_stat_statements", "hypopg", "pgstattuple", "pg_buffercache")
 
@@ -120,13 +123,23 @@ def analyze(
             "younger statistics are refused."
         ),
     ] = MIN_STATS_WINDOW_HOURS,
+    workload_window_days: Annotated[
+        float,
+        typer.Option(
+            help="Read only the last N days of Azure Query Store (default 14). Pass 0 to read "
+            "all of its retention, which a large history may be refused for (too many rows)."
+        ),
+    ] = WORKLOAD_WINDOW_DAYS,
 ) -> None:
     """Run the deterministic analysis (no LLM): tables by size and ranked Findings; with
     `-a workload`, the most expensive statements."""
+    setup_logging()
     service = AnalyzerService()
     connection = _connection(service, name)
     chosen = analyzer or list(DEFAULT_ANALYZERS)
-    options = RunOptions(table or None, exact_counts, timedelta(hours=min_stats_window))
+    # 0 reads all of retention; any positive N is that many days.
+    window = timedelta(days=workload_window_days) if workload_window_days else None
+    options = RunOptions(table or None, exact_counts, timedelta(hours=min_stats_window), window)
     try:
         chosen_analyzers(chosen, options)
     except UnknownAnalyzer as e:
@@ -145,6 +158,7 @@ def analyze(
                 collections=options.collections,
                 exact_counts=options.exact_counts,
                 min_stats_window=options.min_stats_window,
+                workload_window=options.workload_window,
             )
         except UnknownCollections as e:
             console.print(f"[bold red]{e}[/]")
@@ -305,6 +319,9 @@ def serve(
     """Serve the HTTP API on this machine. Set DBX_API_TOKEN to require it as a bearer token on
     every request; the API holds database credentials, so it listens beyond loopback only with
     one."""
+    log_file = setup_logging()
+    if log_file is not None:
+        console.print(f"[dim]Logging to {escape(str(log_file))}[/]")
     token = os.environ.get(API_TOKEN_ENV) or None
     if token is None and not _loopback(host):
         console.print(
@@ -332,6 +349,7 @@ def chat(
     ] = None,
 ) -> None:
     """Chat with the agent about one Connection. Needs OPENAI_API_KEY."""
+    setup_logging()
     service = AnalyzerService()
     try:
         connection = service.connection(name)

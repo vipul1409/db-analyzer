@@ -1,7 +1,8 @@
 """Postgres workload collection: pg_stat_statements and Azure Query Store as sources, and the
 catalog reads of the schema-only review that stands in when there is none."""
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from pglast.parser import ParseError, Token, scan
 
@@ -19,6 +20,8 @@ from db_analyzer.core.model import (
     WorkloadStatement,
 )
 from db_analyzer.safety.executor import Row, SafeExecutor
+
+logger = logging.getLogger(__name__)
 
 # Other roles' statements only, in this database: with pg_stat_statements.track = all the
 # analyzer's own statements, including PREPARE of workload text, are recorded too, and must
@@ -46,7 +49,11 @@ class PgStatStatements:
             return []
         return enable_steps(installed, preloaded, probe.host_type == "azure_flexible")
 
-    def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading:
+    def read(
+        self, executor: SafeExecutor, probe: ProbeResult, window: timedelta | None = None
+    ) -> WorkloadReading:
+        # `window` does not apply: pg_stat_statements keeps cumulative counters since the last
+        # reset, not per-interval rows, so there is nothing to restrict by start time.
         schema = probe.extension_schemas["pg_stat_statements"].replace('"', '""')
         rows = executor.execute(_STATEMENTS.format(schema=f'"{schema}"'), purpose="workload")
         return WorkloadReading(
@@ -68,7 +75,7 @@ SELECT q.query_sql_text AS query, sum(q.calls) AS calls, sum(q.total_time) AS to
        sum(q.temp_blks_written) AS temp_blks_written, min(q.start_time) AS since
 FROM query_store.qs_view q
 WHERE q.db_id = {db_oid} AND NOT q.is_system_query
-  AND q.user_id <> (SELECT r.oid FROM pg_roles r WHERE r.rolname = current_user)
+  AND q.user_id <> (SELECT r.oid FROM pg_roles r WHERE r.rolname = current_user){window}
 GROUP BY q.query_id, q.query_sql_text
 """
 _DATABASE_OID = "SELECT d.oid FROM pg_database d WHERE d.datname = current_database()"
@@ -84,7 +91,10 @@ class QueryStore:
     """Azure Query Store as a workload source, read from the azure_sys database through an
     auxiliary session of the Connection. Its statistics cover the retention period
     (pg_qs.retention_period_in_days), so the window starts at the oldest interval it holds, and
-    the interval still being recorded is not visible yet. Its text is the first run of each
+    the interval still being recorded is not visible yet. A caller may narrow the read to a
+    shorter `window` (e.g. the last two weeks): Query Store keeps one row per recording interval,
+    so this also cuts the result-row estimate the EXPLAIN gate checks. Its text is the first run
+    of each
     statement, values included, so they are replaced by placeholders before anything ranks or
     stores it."""
 
@@ -103,12 +113,16 @@ class QueryStore:
             steps.append(f"GRANT CONNECT ON DATABASE {AZURE_SYS} TO <analyzer role>;")
         return steps
 
-    def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading:
+    def read(
+        self, executor: SafeExecutor, probe: ProbeResult, window: timedelta | None = None
+    ) -> WorkloadReading:
         [database] = executor.execute(_DATABASE_OID, purpose="workload")
+        query = _QUERY_STORE.format(db_oid=int(database["oid"]), window=_window_clause(window))
+        logger.info("query store read: window=%s db_oid=%s", window, database["oid"])
+        logger.info("query store SQL sent to %s:\n%s", AZURE_SYS, query.strip())
         with executor.auxiliary(AZURE_SYS) as azure_sys_executor:
-            rows = azure_sys_executor.execute(
-                _QUERY_STORE.format(db_oid=int(database["oid"])), purpose="workload"
-            )
+            rows = azure_sys_executor.execute(query, purpose="workload")
+        logger.info("query store read ok: %d rows", len(rows))
         max_length = int(probe.settings.get(MAX_QUERY_TEXT_LENGTH) or DEFAULT_MAX_TEXT_LENGTH)
         starts = [_utc(r["since"]) for r in rows if r["since"] is not None]
         return WorkloadReading(
@@ -118,6 +132,15 @@ class QueryStore:
 
 
 QUERY_STORE = QueryStore()
+
+
+def _window_clause(window: timedelta | None) -> str:
+    """SQL limiting the read to intervals that started within `window` of now, or empty for all
+    of the retention period. `window` comes from trusted code (a timedelta), inlined as whole
+    seconds; make_interval keeps it out of the literal-quoting the gate would otherwise see."""
+    if window is None:
+        return ""
+    return f"\n  AND q.start_time >= now() - make_interval(secs => {int(window.total_seconds())})"
 
 
 def _readable(text: str, max_length: int) -> str:

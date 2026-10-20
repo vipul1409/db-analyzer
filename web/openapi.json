@@ -3404,11 +3404,23 @@
               }
             ],
             "title": "Min Stats Window Hours"
+          },
+          "workload_window_days": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workload Window Days"
           }
         },
         "type": "object",
         "title": "RunIn",
-        "description": "A deterministic Run: no model. `collections` targets inventory at those tables\n(schema-qualified, or bare when unambiguous) and `exact_counts` counts their rows, each only\nwhere the EXPLAIN gate allows. `min_stats_window_hours` is how young workload statistics\nmay be before ranking is refused (default 1 h). Options no chosen analyzer takes are\nrefused."
+        "description": "A deterministic Run: no model. `collections` targets inventory at those tables\n(schema-qualified, or bare when unambiguous) and `exact_counts` counts their rows, each only\nwhere the EXPLAIN gate allows. `min_stats_window_hours` is how young workload statistics\nmay be before ranking is refused (default 1 h). `workload_window_days` reads only statements\nrecorded in the last N days from Azure Query Store; omitted or null uses the default of 14,\nand 0 reads all of its retention, which a large Query Store history may be refused for (too\nmany rows). Options no chosen analyzer takes are refused."
       },
       "RunView": {
         "properties": {

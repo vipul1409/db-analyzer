@@ -127,6 +127,18 @@ def test_a_recent_stats_reset_warns_and_ranks_nothing() -> None:
     assert workload.analyze(r) == []
 
 
+def test_no_window_reads_all_of_query_store_retention() -> None:
+    assert pg_workload._window_clause(None) == ""
+
+
+def test_a_window_limits_query_store_by_interval_start_in_whole_seconds() -> None:
+    clause = pg_workload._window_clause(timedelta(days=14))
+
+    assert "q.start_time >= now() - make_interval(secs => 1209600)" in clause
+    # Inlined as an integer, so the EXPLAIN gate never sees it as a quoted literal.
+    assert "'" not in clause
+
+
 def test_the_minimum_window_is_configurable() -> None:
     reset = NOW - timedelta(minutes=5)
 

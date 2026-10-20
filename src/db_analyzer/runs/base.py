@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import timedelta
 
-from db_analyzer.analyzers.workload import MIN_STATS_WINDOW
+from db_analyzer.analyzers.workload import DEFAULT_WORKLOAD_WINDOW, MIN_STATS_WINDOW
 from db_analyzer.core.model import (
     AnalyzerName,
     CollectionRef,
@@ -27,6 +27,10 @@ class RunOptions:
     collections: Sequence[str] | None = None
     exact_counts: bool = False
     min_stats_window: timedelta = MIN_STATS_WINDOW
+    # How far back to read a per-interval workload source (Azure Query Store); defaults to the
+    # last 14 days, which also keeps the read under the EXPLAIN gate's row cap. None reads all of
+    # its retention.
+    workload_window: timedelta | None = DEFAULT_WORKLOAD_WINDOW
 
     def asked(self) -> set[str]:
         """The options set to something other than their default."""

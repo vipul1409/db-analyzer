@@ -52,6 +52,7 @@ function AnalyzeForm({
   const [typed, setTyped] = useState("");
   const [exactCounts, setExactCounts] = useState(false);
   const [windowHours, setWindowHours] = useState("1");
+  const [windowDays, setWindowDays] = useState("14");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<unknown>();
 
@@ -68,6 +69,8 @@ function AnalyzeForm({
     const body: Schemas["RunIn"] = { analyzers: chosen, exact_counts: inventory && exactCounts };
     if (inventory && targeted) body.collections = collections;
     if (workload) body.min_stats_window_hours = Number(windowHours);
+    // Blank means all of retention: send 0 so the API's 14-day default doesn't apply instead.
+    if (workload) body.workload_window_days = windowDays.trim() === "" ? 0 : Number(windowDays);
     try {
       const run = await unwrap(
         api.POST("/api/connections/{connection_id}/runs", {
@@ -150,6 +153,11 @@ function AnalyzeForm({
             <input type="number" min={0} step="any" value={windowHours} onChange={(e) => setWindowHours(e.target.value)} required />
           </label>
           <p className="hint">Statistics younger than this aren't ranked.</p>
+          <label className="field field-inline">
+            <span>Only the last (days)</span>
+            <input type="number" min={0} step="any" value={windowDays} onChange={(e) => setWindowDays(e.target.value)} placeholder="all" />
+          </label>
+          <p className="hint">Azure Query Store only. Defaults to the last 14 days; clear it to read all of retention (may be refused for too many rows).</p>
         </fieldset>
       )}
 

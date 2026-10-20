@@ -790,8 +790,10 @@ export interface components {
          * @description A deterministic Run: no model. `collections` targets inventory at those tables
          *     (schema-qualified, or bare when unambiguous) and `exact_counts` counts their rows, each only
          *     where the EXPLAIN gate allows. `min_stats_window_hours` is how young workload statistics
-         *     may be before ranking is refused (default 1 h). Options no chosen analyzer takes are
-         *     refused.
+         *     may be before ranking is refused (default 1 h). `workload_window_days` reads only statements
+         *     recorded in the last N days from Azure Query Store; omitted or null uses the default of 14,
+         *     and 0 reads all of its retention, which a large Query Store history may be refused for (too
+         *     many rows). Options no chosen analyzer takes are refused.
          */
         RunIn: {
             /** Analyzers */
@@ -805,6 +807,8 @@ export interface components {
             exact_counts: boolean;
             /** Min Stats Window Hours */
             min_stats_window_hours?: number | null;
+            /** Workload Window Days */
+            workload_window_days?: number | null;
         };
         /**
          * RunView

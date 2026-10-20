@@ -145,26 +145,34 @@ class FakeSource:
     stats_reset: datetime | None = NOW - timedelta(days=3)
     reads: int = 0
     fails: Exception | None = None
+    window_read: timedelta | None = None
 
     def enable_steps(self, probe: ProbeResult) -> list[str]:
         return self.steps
 
-    def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading:
+    def read(
+        self, executor: SafeExecutor, probe: ProbeResult, window: timedelta | None = None
+    ) -> WorkloadReading:
         self.reads += 1
+        self.window_read = window
         if self.fails is not None:
             raise self.fails
         statement = WorkloadStatement(SQL, 10, 100.0, 10, 0, 0)
         return WorkloadReading([statement], self.stats_reset)
 
 
-def collect(*sources: FakeSource, window: timedelta = timedelta(hours=1)) -> Collected:
+def collect(
+    *sources: FakeSource,
+    window: timedelta = timedelta(hours=1),
+    workload_window: timedelta | None = workload.DEFAULT_WORKLOAD_WINDOW,
+) -> Collected:
     # Readable sources never touch the executor, and planning is left out: only the schema-only
     # review and the planner do.
     context = RunContext(
         cast(SafeExecutor, None),
         probe(),
         GateLimits(),
-        RunOptions(min_stats_window=window),
+        RunOptions(min_stats_window=window, workload_window=workload_window),
     )
     return runs_workload.measure(context, sources, planner=lambda *_: ({}, PlanContext({})))
 
@@ -175,9 +183,19 @@ def test_the_first_readable_source_is_ranked() -> None:
     c = collect(unreadable, readable)
 
     assert (unreadable.reads, readable.reads) == (0, 1)
+    # The run's workload window (14 days by default) is threaded to the source that is read.
+    assert readable.window_read == workload.DEFAULT_WORKLOAD_WINDOW
     assert c.workload is not None and c.workload.source == "pg_stat_statements"
     assert [o.fingerprint for o in c.found] == [f"slow_query:{workload.fingerprint(SQL)}"]
     assert c.scope == [] and c.complete
+
+
+def test_the_workload_window_is_threaded_to_the_source() -> None:
+    readable = FakeSource()
+
+    collect(readable, workload_window=None)  # None reads all of retention
+
+    assert readable.window_read is None
 
 
 def test_statistics_younger_than_the_window_are_refused_and_measure_nothing() -> None:

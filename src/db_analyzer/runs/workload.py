@@ -2,7 +2,9 @@
 source the Connection can read and explain each from its generic plan, or, with none, review the
 schema instead and say how to enable one (ADR 0010)."""
 
+import logging
 from collections.abc import Callable, Sequence
+from datetime import timedelta
 from typing import Protocol
 
 import psycopg
@@ -24,6 +26,8 @@ from db_analyzer.core.model import (
 from db_analyzer.runs.base import Analyzer, Collected, RunContext
 from db_analyzer.safety.executor import SafeExecutor
 
+logger = logging.getLogger(__name__)
+
 
 class Source(Protocol):
     """Where a Connection's record of executed statements comes from."""
@@ -35,7 +39,13 @@ class Source(Protocol):
         """What to do, in order, to make the source readable; empty when it already is."""
         ...
 
-    def read(self, executor: SafeExecutor, probe: ProbeResult) -> WorkloadReading: ...
+    def read(
+        self, executor: SafeExecutor, probe: ProbeResult, window: timedelta | None = None
+    ) -> WorkloadReading:
+        """Read the workload. `window` narrows it to statements recorded within that span, where
+        the source records per-interval statistics (Query Store); a cumulative source ignores
+        it."""
+        ...
 
 
 # Preferred first: a Run reads the first one the Connection can, and with none, shows how to
@@ -59,7 +69,14 @@ def measure(
     executor, probe = ctx.executor, ctx.probe
     steps = [s.enable_steps(probe) for s in sources]
     readable = [s for s, missing in zip(sources, steps, strict=True) if not missing]
+    logger.info(
+        "workload measure: host=%s workload_window=%s readable=%s",
+        probe.host_type,
+        ctx.options.workload_window,
+        [s.name for s in readable] or None,
+    )
     if not readable:
+        logger.info("workload: no readable source, reviewing the schema instead")
         foreign_keys = pg_workload.unindexed_foreign_keys(executor, probe.server_version_num)
         scans = pg_workload.scan_activity(executor, probe.server_version_num)
         return Collected(
@@ -69,17 +86,21 @@ def measure(
             workload=workload.no_source(steps[0] if steps else []),
         )
     source = readable[0]
+    logger.info("workload: reading source=%s window=%s", source.name, ctx.options.workload_window)
     try:
-        reading = source.read(executor, probe)
+        reading = source.read(executor, probe, ctx.options.workload_window)
     except QueryCapReached:
+        logger.warning("workload: query cap reached reading source=%s", source.name)
         raise  # ends the Turn's database work, not just this ranking
     except (QueryRejected, ConnectionRefused, psycopg.Error) as e:
+        logger.warning("workload: source=%s could not be read: %s", source.name, str(e).strip())
         return Collected(
             found=[],
             scope=None,
             complete=False,
             workload=workload.unreadable(source.name, str(e).strip()),
         )
+    logger.info("workload: read source=%s, %d statements", source.name, len(reading.statements))
     report = workload.report(
         reading.statements,
         source=source.name,
@@ -116,5 +137,8 @@ def plan_statements(
 # Covers nothing yet: a statement missing from a later top 25 isn't fixed, and the schema-only
 # review's missing_index Findings wait for index advice to say what its scope covers (ADR 0010).
 ANALYZER = Analyzer(
-    "workload", options=frozenset({"min_stats_window"}), covers=frozenset(), measure=measure
+    "workload",
+    options=frozenset({"min_stats_window", "workload_window"}),
+    covers=frozenset(),
+    measure=measure,
 )

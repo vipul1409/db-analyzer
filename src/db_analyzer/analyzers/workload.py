@@ -31,6 +31,9 @@ from db_analyzer.core.units import BLOCK_BYTES, format_bytes, format_duration
 TOP_N = 25  # statements kept per ranking
 # Statistics younger than this say little about the workload. Per-Run configurable.
 MIN_STATS_WINDOW = timedelta(hours=1)
+# How far back a per-interval source (Azure Query Store) is read by default. Per-Run
+# configurable; None reads all of its retention, at the risk of the EXPLAIN gate's row cap.
+DEFAULT_WORKLOAD_WINDOW = timedelta(days=14)
 # Statistics younger than this still rank, but may miss daily or weekly jobs.
 SHORT_WINDOW = timedelta(hours=24)
 
