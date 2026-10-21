@@ -173,7 +173,7 @@ flowchart TB
 |---|---|---|
 | Front ends | `cli.py`, `api/`, `web/`, `agent/studio.py` | Rendering only. The API may import nothing behind the facade, and `tests/unit/test_architecture.py` enforces this. |
 | Facade | `service.py` (`AnalyzerService`) | The only entry point. It manages Connections, Runs, Findings, Threads and Turns, audit and usage. It is frozen at v1, so a change needs an ADR (ADR 0016). |
-| Agent | `agent/graph.py`, `tools.py`, `digest.py`, `llm.py`, `events.py` | The deepagents graph, its tools, the compact JSON the tools return, model middleware, and translation into `AgentEvent`s. |
+| Agent | `agent/graph.py`, `tools.py`, `digest.py`, `llm.py`, `events.py`, `turns.py` | The deepagents graph, its tools, the compact JSON the tools return, model middleware, translation into `AgentEvent`s, and the Turn engine (`turns.py`: one Turn per Thread, streaming and cooperative cancellation) that `send`/`cancel` delegate to. |
 | Runs | `runs/` | An `Analyzer` interface (`collect` → `Collected`) and `combine`, which turns the analyzers' results into one Run with scope, skipped collections and status. |
 | Analyzers | `analyzers/` | Pure logic over collected data: inventory, index health, workload ranking, plan rules. |
 | Adapter | `adapters/postgres/`, `adapters/sql_common/` | Probe, session hardening, catalog query templates (`queries/*.sql`), generic plans and the plan normalizer, and the workload sources. |
