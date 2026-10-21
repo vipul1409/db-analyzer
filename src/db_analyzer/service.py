@@ -10,7 +10,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import httpx
 import psycopg
@@ -554,6 +554,16 @@ class AnalyzerService:
             )
 
 
+class _RunOptions(TypedDict, total=False):
+    """The optional Run arguments a Run-backed tool may set: the keyword-only options of
+    AnalyzerService.run. A tool declares just the ones it needs; mypy checks the rest."""
+
+    collections: Sequence[str] | None
+    exact_counts: bool
+    min_stats_window: timedelta
+    workload_window: timedelta | None
+
+
 class AgentTurn:
     """The TurnBackend the agent's tools call: one Thread's Connection, one Turn's query cap,
     and SQL and Run events streamed to the caller. Failures come back as explicit errors, so
@@ -586,19 +596,7 @@ class AgentTurn:
         logger.info(
             "agent tool: get_storage(top_n=%d) connection=%s", top_n, self._thread.connection_id
         )
-
-        def measure(emit: Callable[[Any], None]) -> dict[str, Any]:
-            run = self._service.run(
-                self._thread.connection_id,
-                ["inventory"],
-                self._thread.id,
-                self._budget,
-                _sql_events(emit),
-            )
-            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.storage(self._service.run_view(run.id), top_n)
-
-        return self._guarded(measure)
+        return self._run_tool(["inventory"], {}, lambda view: digest.storage(view, top_n))
 
     def count_exact(self, tables: list[str], all_tables: bool) -> dict[str, Any]:
         logger.info(
@@ -609,21 +607,11 @@ class AgentTurn:
         )
         if not tables and not all_tables:
             return {"error": "name the tables to count, or set all_tables"}
-
-        def count(emit: Callable[[Any], None]) -> dict[str, Any]:
-            run = self._service.run(
-                self._thread.connection_id,
-                ["inventory"],
-                self._thread.id,
-                self._budget,
-                _sql_events(emit),
-                collections=None if all_tables else tables,
-                exact_counts=True,
-            )
-            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.exact_counts(self._service.run_view(run.id))
-
-        return self._guarded(count)
+        return self._run_tool(
+            ["inventory"],
+            {"collections": None if all_tables else tables, "exact_counts": True},
+            digest.exact_counts,
+        )
 
     def sql(self, sql: str, purpose: str) -> dict[str, Any]:
         logger.info(
@@ -649,20 +637,11 @@ class AgentTurn:
             self._thread.connection_id,
             self._thread.id,
         )
-
-        def rank(emit: Callable[[Any], None]) -> dict[str, Any]:
-            run = self._service.run(
-                self._thread.connection_id,
-                ["workload"],
-                self._thread.id,
-                self._budget,
-                _sql_events(emit),
-                min_stats_window=self._service.min_stats_window,
-            )
-            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
-            return digest.top_queries(self._service.run_view(run.id), top_n)
-
-        return self._guarded(rank)
+        return self._run_tool(
+            ["workload"],
+            {"min_stats_window": self._service.min_stats_window},
+            lambda view: digest.top_queries(view, top_n),
+        )
 
     def query_details(self, rank: int) -> dict[str, Any]:
         """From the Thread's latest workload Run, else the Connection's: no SQL, no Run."""
@@ -680,6 +659,31 @@ class AgentTurn:
                     return r
                 connections = r
         return connections
+
+    def _run_tool(
+        self,
+        analyzers: Sequence[str],
+        options: _RunOptions,
+        digest_view: Callable[[RunView], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """The flow every Run-backed tool shares: start a Run over `analyzers` with `options`,
+        emit its run_finished event, then digest the Run view. A tool is just those three; the
+        guard → run → emit → digest flow lives here once, so a new tool is one declaration and
+        the AgentEvent sequence stays identical (ADR 0016)."""
+
+        def work(emit: Callable[[Any], None]) -> dict[str, Any]:
+            run = self._service.run(
+                self._thread.connection_id,
+                analyzers,
+                self._thread.id,
+                self._budget,
+                _sql_events(emit),
+                **options,
+            )
+            emit(RunFinished(run_id=run.id, status=run.status).model_dump())
+            return digest_view(self._service.run_view(run.id))
+
+        return self._guarded(work)
 
     def _guarded(self, work: Callable[[Callable[[Any], None]], dict[str, Any]]) -> dict[str, Any]:
         emit = _stream_writer()
