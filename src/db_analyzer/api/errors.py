@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
+from db_analyzer.agent.turns import TurnActive
 from db_analyzer.core.model import (
     ConnectionRefused,
     DsnEnvMissing,
@@ -18,7 +19,7 @@ from db_analyzer.core.model import (
     UnknownCollections,
 )
 from db_analyzer.runs import OptionsNotAccepted, UnknownAnalyzer
-from db_analyzer.service import RunsNotComparable, TurnActive
+from db_analyzer.service import RunsNotComparable
 
 
 class ErrorBody(BaseModel):
