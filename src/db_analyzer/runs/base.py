@@ -18,6 +18,11 @@ from db_analyzer.core.model import (
 )
 from db_analyzer.safety.executor import SafeExecutor
 
+# What a finished Run records, per analyzer: the collections it measured, and those it planned
+# to measure but skipped, each with the reason.
+Scope = dict[AnalyzerName, list[CollectionRef]]
+Skipped = dict[AnalyzerName, list[tuple[CollectionRef, str]]]
+
 
 @dataclass(frozen=True)
 class RunOptions:

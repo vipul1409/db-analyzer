@@ -10,6 +10,9 @@ ALLOWED = {
     SRC / "adapters" / "postgres" / "session.py",
 }
 RAW_DB_ACCESS = re.compile(r"\.(execute|executemany|cursor|copy)\(|psycopg\.connect\(")
+# Domain calls whose name ends in `.execute(` but which are not cursor access: SafeExecutor's own
+# method, and `runs.execute(...)`, the Run-transaction seam.
+NOT_CURSOR_ACCESS = ("executor.execute(", "runs.execute(")
 
 
 def test_no_raw_database_access_outside_safe_executor() -> None:
@@ -18,7 +21,7 @@ def test_no_raw_database_access_outside_safe_executor() -> None:
         for path in SRC.rglob("*.py")
         if path not in ALLOWED and "migrations" not in path.parts
         for lineno, line in enumerate(path.read_text().splitlines(), start=1)
-        if RAW_DB_ACCESS.search(line) and "executor.execute(" not in line
+        if RAW_DB_ACCESS.search(line) and not any(ok in line for ok in NOT_CURSOR_ACCESS)
     ]
     assert offenders == []
 

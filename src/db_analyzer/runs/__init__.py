@@ -1,30 +1,43 @@
 """The analyzers a Run can include, and how their results make one Run."""
 
-from collections.abc import Mapping, Sequence
+import logging
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
+from db_analyzer.core import lifecycle
 from db_analyzer.core.model import (
     AnalyzerName,
     CollectionRef,
+    Connection,
+    Finding,
+    FindingStatus,
     Observed,
+    ProbeResult,
+    Run,
     RunStatus,
     StorageStats,
     WorkloadReport,
 )
 from db_analyzer.runs import inventory, workload
-from db_analyzer.runs.base import Analyzer, Collected, RunContext, RunOptions
+from db_analyzer.runs.base import Analyzer, Collected, RunContext, RunOptions, Scope, Skipped
 
 __all__ = [
     "ANALYZERS",
     "DEFAULT",
     "Analyzer",
+    "Collect",
     "Collected",
     "Outcome",
     "RunContext",
     "RunOptions",
+    "RunStore",
     "chosen_analyzers",
     "combine",
+    "execute",
 ]
+
+logger = logging.getLogger(__name__)
 
 # In the order a Run collects them, which is also the rank order of its Findings.
 ANALYZERS: dict[AnalyzerName, Analyzer] = {
@@ -90,3 +103,64 @@ def combine(results: Mapping[AnalyzerName, Collected]) -> Outcome:
         storage=[s for c in results.values() for s in c.storage],
         workload=reports[0] if reports else None,
     )
+
+
+# What produces a Run's results: probe the Connection and collect with each analyzer. It is the
+# only part of a Run that touches the database, so passing a canned one drives `execute` with no
+# database at all.
+Collect = Callable[[], tuple[ProbeResult, Outcome]]
+
+
+class RunStore(Protocol):
+    """The slice of the store a Run transaction writes through. The real Store satisfies it; a
+    fake lets the whole transaction be tested without a database."""
+
+    def start_run(self, connection_id: str, thread_id: str | None) -> Run: ...
+    def save_probe(self, connection_id: str, result: ProbeResult) -> None: ...
+    def save_snapshots(self, run_id: str, measured: list[StorageStats]) -> None: ...
+    def save_workload(self, run_id: str, report: WorkloadReport) -> None: ...
+    def record_observations(
+        self, connection_id: str, run_id: str, observed: list[Observed]
+    ) -> None: ...
+    def finish_run(self, run_id: str, status: RunStatus, scope: Scope, skipped: Skipped) -> Run: ...
+    def findings(
+        self, connection_id: str, statuses: Collection[FindingStatus] | None = None
+    ) -> list[Finding]: ...
+    def update_findings(self, findings: list[Finding]) -> None: ...
+
+
+def execute(
+    store: RunStore, connection: Connection, collect: Collect, thread_id: str | None = None
+) -> Run:
+    """Run one Run as a single transaction: start it, collect (the only database work), persist
+    the probe, snapshots, workload and observations in that order, finish it, then move the
+    Connection's Findings through their lifecycle.
+
+    On any error the Run is finished `failed` with no scope and the error re-raised, so a failed
+    Run leaves nothing half-written and the lifecycle never runs on it. Returns the finished
+    Run."""
+    run = store.start_run(connection.id, thread_id)
+    logger.info("run %s start: connection=%s thread=%s", run.id, connection.name, thread_id)
+    try:
+        probe, outcome = collect()
+        store.save_probe(connection.id, probe)
+        store.save_snapshots(run.id, outcome.storage)
+        if outcome.workload is not None:
+            store.save_workload(run.id, outcome.workload)
+        store.record_observations(connection.id, run.id, outcome.found)
+    except BaseException:
+        logger.exception("run %s failed", run.id)
+        store.finish_run(run.id, "failed", scope={}, skipped={})
+        raise
+    if outcome.workload is not None and outcome.workload.refused:
+        logger.warning("run %s workload refused: %s", run.id, outcome.workload.refused)
+    run = store.finish_run(run.id, outcome.status, scope=outcome.scope, skipped=outcome.skipped)
+    logger.info("run %s finished: status=%s", run.id, run.status)
+    changed = lifecycle.after_run(
+        run,
+        store.findings(connection.id),
+        {o.fingerprint for o in outcome.found},
+        existing=outcome.existing,
+    )
+    store.update_findings(changed)
+    return run

@@ -51,7 +51,7 @@ from db_analyzer.agent.llm import (
 )
 from db_analyzer.agent.tools import build_tools
 from db_analyzer.analyzers import workload
-from db_analyzer.core import lifecycle, run_view
+from db_analyzer.core import run_view
 from db_analyzer.core.comparison import RunComparison, compare
 from db_analyzer.core.model import (
     AuditEntry,
@@ -206,11 +206,9 @@ class AnalyzerService:
         options = runs.RunOptions(collections, exact_counts, min_stats_window, workload_window)
         chosen = runs.chosen_analyzers(analyzers, options)
         connection = self._store.get_connection(connection_id)
-        run = self._store.start_run(connection.id, thread_id)
         logger.info(
-            "run %s start: connection=%s analyzers=%s workload_window=%s min_stats_window=%s "
+            "run requested: connection=%s analyzers=%s workload_window=%s min_stats_window=%s "
             "exact_counts=%s collections=%s thread=%s",
-            run.id,
             connection.name,
             list(analyzers),
             workload_window,
@@ -219,34 +217,15 @@ class AnalyzerService:
             collections,
             thread_id,
         )
-        try:
+
+        def collect() -> tuple[ProbeResult, runs.Outcome]:
+            # The only database work: probe the Connection and collect with each analyzer.
             with self._executor(connection, thread_id, budget, on_sql) as executor:
                 probe = pg_probe.probe(executor)
                 context = runs.RunContext(executor, probe, connection.gate, options)
-                outcome = runs.combine({a.name: a.collect(context) for a in chosen})
-            self._store.save_probe(connection.id, probe)
-            self._store.save_snapshots(run.id, outcome.storage)
-            if outcome.workload is not None:
-                self._store.save_workload(run.id, outcome.workload)
-            self._store.record_observations(connection.id, run.id, outcome.found)
-        except BaseException:
-            logger.exception("run %s failed", run.id)
-            self._store.finish_run(run.id, "failed", scope={}, skipped={})
-            raise
-        if outcome.workload is not None and outcome.workload.refused:
-            logger.warning("run %s workload refused: %s", run.id, outcome.workload.refused)
-        run = self._store.finish_run(
-            run.id, outcome.status, scope=outcome.scope, skipped=outcome.skipped
-        )
-        logger.info("run %s finished: status=%s", run.id, run.status)
-        changed = lifecycle.after_run(
-            run,
-            self._store.findings(connection.id),
-            {o.fingerprint for o in outcome.found},
-            existing=outcome.existing,
-        )
-        self._store.update_findings(changed)
-        return run
+                return probe, runs.combine({a.name: a.collect(context) for a in chosen})
+
+        return runs.execute(self._store, connection, collect, thread_id)
 
     def run_sql(
         self,
